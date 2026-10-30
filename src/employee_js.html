@@ -1,0 +1,161 @@
+<script>
+(function () {
+  'use strict';
+
+  function $(sel) { return document.querySelector(sel); }
+  function esc(s) {
+    return String(s === undefined || s === null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function formatMs(ms) {
+    ms = Math.max(0, Math.floor(Number(ms) || 0));
+    var s = Math.floor(ms / 1000);
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    return [h, m, sec].map(function (x) { return String(x).padStart(2, '0'); }).join(':');
+  }
+  function formatDateTime(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleString(); } catch (e) { return String(iso); }
+  }
+  function statusPill(status) {
+    return '<span class="pill ' + esc(status) + '">' + esc(status || '—') + '</span>';
+  }
+  function call(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (err) { reject(new Error(err && err.message ? err.message : String(err))); });
+      runner[fn].apply(runner, args);
+    });
+  }
+
+  var btnStart = $('#btn-start');
+  var btnPause = $('#btn-pause');
+  var btnResume = $('#btn-resume');
+  var btnFinish = $('#btn-finish');
+  var timerDisplay = $('#timer-display');
+  var statusEl = $('#status');
+  var taskTitle = $('#task-title');
+
+  var state = null;
+  var fetchedAt = 0;
+  var tickHandle = null;
+
+  function setStatus(msg, kind) {
+    statusEl.className = 'status' + (kind ? ' ' + kind : '');
+    statusEl.textContent = msg || '';
+  }
+
+  function stopTicking() {
+    if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+  }
+
+  function startTicking() {
+    stopTicking();
+    tickHandle = setInterval(renderTimer, 1000);
+    renderTimer();
+  }
+
+  function renderTimer() {
+    if (!state || !state.activeTask) {
+      timerDisplay.textContent = '00:00:00';
+      return;
+    }
+    var base = Number(state.totalMsForActiveTask) || 0;
+    var extra = state.activeSession ? (Date.now() - fetchedAt) : 0;
+    timerDisplay.textContent = formatMs(base + extra);
+  }
+
+  function renderButtons() {
+    btnStart.hidden = btnPause.hidden = btnResume.hidden = btnFinish.hidden = true;
+    if (!state || !state.activeTask) return;
+    if (state.activeSession) {
+      btnPause.hidden = false;
+      btnFinish.hidden = false;
+      return;
+    }
+    var hasPrior = (state.sessions || []).some(function (s) { return s.taskId === state.activeTask.id; });
+    if (hasPrior) btnResume.hidden = false; else btnStart.hidden = false;
+    btnFinish.hidden = false;
+  }
+
+  function renderTaskTitle() {
+    if (!state || !state.activeTask) {
+      taskTitle.textContent = 'No active task. Ask your manager to assign one.';
+    } else {
+      taskTitle.textContent = state.activeTask.title;
+    }
+  }
+
+  function renderHistory() {
+    var table = $('#history-table');
+    var empty = $('#history-empty');
+    var loading = $('#history-loading');
+    loading.hidden = true;
+    var sessions = (state && state.sessions) || [];
+    if (!sessions.length) {
+      table.hidden = true; empty.hidden = false; return;
+    }
+    empty.hidden = true;
+    var taskById = {};
+    (state.tasks || []).forEach(function (t) { taskById[t.id] = t; });
+    var tbody = table.querySelector('tbody');
+    tbody.innerHTML = '';
+    sessions.slice().sort(function (a, b) { return a.startTime < b.startTime ? 1 : -1; }).forEach(function (s) {
+      var tr = document.createElement('tr');
+      var dur = Number(s.durationMs) || 0;
+      if (s.status === 'active') dur = Date.now() - new Date(s.startTime).getTime();
+      var task = taskById[s.taskId];
+      tr.innerHTML =
+        '<td>' + esc(task ? task.title : '(unknown)') + '</td>' +
+        '<td>' + formatDateTime(s.startTime) + '</td>' +
+        '<td>' + formatDateTime(s.endTime) + '</td>' +
+        '<td>' + formatMs(dur) + '</td>' +
+        '<td>' + statusPill(s.status) + '</td>';
+      tbody.appendChild(tr);
+    });
+    table.hidden = false;
+  }
+
+  function refresh() {
+    return call('api_getEmployeeState', WORKSPACE_TOKEN).then(function (s) {
+      state = s;
+      fetchedAt = Date.now();
+      renderTaskTitle();
+      renderButtons();
+      renderHistory();
+      if (state.activeSession) startTicking(); else { stopTicking(); renderTimer(); }
+      setStatus('');
+    }).catch(function (err) {
+      setStatus(err.message, 'error');
+    });
+  }
+
+  function action(fn, label) {
+    setStatus(label + '…');
+    [btnStart, btnPause, btnResume, btnFinish].forEach(function (b) { b.disabled = true; });
+    return call(fn, WORKSPACE_TOKEN).then(function () {
+      return refresh();
+    }).catch(function (err) {
+      setStatus(err.message, 'error');
+    }).then(function () {
+      [btnStart, btnPause, btnResume, btnFinish].forEach(function (b) { b.disabled = false; });
+    });
+  }
+
+  btnStart.addEventListener('click', function () { action('api_startSession', 'Starting'); });
+  btnResume.addEventListener('click', function () { action('api_resumeSession', 'Resuming'); });
+  btnPause.addEventListener('click', function () { action('api_pauseSession', 'Pausing'); });
+  btnFinish.addEventListener('click', function () {
+    if (!confirm('Finish the current task? It will be marked completed and the timer will stop.')) return;
+    action('api_finishTask', 'Finishing');
+  });
+
+  refresh();
+  // Resync every minute so changes a manager makes show up without a page reload.
+  setInterval(refresh, 60000);
+})();
+</script>

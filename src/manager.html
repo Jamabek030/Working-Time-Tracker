@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('styles'); ?>
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Working Time Tracker — Manager</h1>
+    <div class="notice">Shared manager console. This page is not protected by authentication; anyone with the URL can use it. Share it only with managers.</div>
+  </div>
+</header>
+<main class="container">
+  <nav class="tabs">
+    <button type="button" class="tab active" data-tab="employees">Employees</button>
+    <button type="button" class="tab" data-tab="reports">Reports</button>
+  </nav>
+
+  <section id="tab-employees" class="tab-panel active">
+    <div class="card">
+      <h2>Add employee</h2>
+      <form id="create-form" autocomplete="off">
+        <div class="row">
+          <label>Last name<input name="lastName" required></label>
+          <label>First name<input name="firstName" required></label>
+          <label>Middle name (optional)<input name="middleName"></label>
+        </div>
+        <div class="row">
+          <label>Email<input name="email" type="email" required></label>
+          <label>Initial task or goal<input name="initialTask" required></label>
+        </div>
+        <div class="row-wrap">
+          <button type="submit" class="primary">Create &amp; send invitation</button>
+        </div>
+        <div id="create-status" class="status"></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Employees</h2>
+      <div id="employees-loading" class="status">Loading…</div>
+      <div id="employees-empty" class="status" hidden>No employees yet. Add one above.</div>
+      <table id="employees-table" hidden>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Total time</th>
+            <th>Status</th>
+            <th>Workspace link</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="details-card" hidden>
+      <div class="row-wrap" style="justify-content: space-between;">
+        <h2 id="details-name" style="margin:0;">Details</h2>
+        <button type="button" class="secondary" id="details-close">Close</button>
+      </div>
+      <div id="details-content"></div>
+    </div>
+  </section>
+
+  <section id="tab-reports" class="tab-panel">
+    <div class="card">
+      <h2>Report</h2>
+      <form id="report-form">
+        <div class="row">
+          <label>From<input name="from" type="date" required></label>
+          <label>To<input name="to" type="date" required></label>
+        </div>
+        <div class="row-wrap">
+          <button type="submit" class="primary">Generate report</button>
+        </div>
+      </form>
+      <div id="report-status" class="status"></div>
+      <div id="report-content"></div>
+    </div>
+  </section>
+</main>
+<?!= include('manager_js'); ?>
+</body>
+</html>

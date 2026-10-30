@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<?!= include('styles'); ?>
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Workspace — <?= employee.firstName ?> <?= employee.lastName ?></h1>
+    <div class="notice">Personal workspace link. Anyone who has this link can use this workspace, so keep it private.</div>
+  </div>
+</header>
+<main class="container">
+  <div class="card">
+    <h2 id="task-title">Loading…</h2>
+    <div class="timer-row">
+      <div class="timer-display" id="timer-display">00:00:00</div>
+      <div class="actions">
+        <button type="button" id="btn-start" class="primary" hidden>Start</button>
+        <button type="button" id="btn-pause" class="warn" hidden>Pause</button>
+        <button type="button" id="btn-resume" class="primary" hidden>Resume</button>
+        <button type="button" id="btn-finish" class="danger" hidden>Finish task</button>
+      </div>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>Work history</h2>
+    <div id="history-loading" class="status">Loading…</div>
+    <div id="history-empty" class="status" hidden>No work sessions recorded yet.</div>
+    <table id="history-table" hidden>
+      <thead>
+        <tr>
+          <th>Task</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Duration</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</main>
+<script>
+  var WORKSPACE_TOKEN = "<?= employee.workspaceToken ?>";
+</script>
+<?!= include('employee_js'); ?>
+</body>
+</html>

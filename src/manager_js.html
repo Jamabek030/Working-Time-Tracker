@@ -1,0 +1,321 @@
+<script>
+(function () {
+  'use strict';
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    if (attrs) {
+      for (var k in attrs) {
+        if (!Object.prototype.hasOwnProperty.call(attrs, k)) continue;
+        if (k === 'text') e.textContent = attrs[k];
+        else if (k === 'html') e.innerHTML = attrs[k];
+        else if (k === 'class') e.className = attrs[k];
+        else e.setAttribute(k, attrs[k]);
+      }
+    }
+    (children || []).forEach(function (c) { if (c) e.appendChild(c); });
+    return e;
+  }
+
+  function esc(s) {
+    return String(s === undefined || s === null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function formatMs(ms) {
+    ms = Math.max(0, Math.floor(Number(ms) || 0));
+    var s = Math.floor(ms / 1000);
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    return [h, m, sec].map(function (x) { return String(x).padStart(2, '0'); }).join(':');
+  }
+
+  function formatDateTime(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleString(); } catch (e) { return String(iso); }
+  }
+
+  function statusPill(status) {
+    var cls = 'pill' + (status ? ' ' + status : '');
+    return '<span class="' + cls + '">' + esc(status || '—') + '</span>';
+  }
+
+  function call(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (err) { reject(new Error(err && err.message ? err.message : String(err))); });
+      runner[fn].apply(runner, args);
+    });
+  }
+
+  // ---------- Tabs ----------
+  $$('.tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      $$('.tab').forEach(function (x) { x.classList.remove('active'); });
+      $$('.tab-panel').forEach(function (x) { x.classList.remove('active'); });
+      t.classList.add('active');
+      $('#tab-' + t.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ---------- Create employee ----------
+  var createForm = $('#create-form');
+  createForm.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var data = {};
+    new FormData(createForm).forEach(function (v, k) { data[k] = v; });
+    var status = $('#create-status');
+    status.className = 'status';
+    status.textContent = 'Creating…';
+    var submitBtn = createForm.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    call('api_createEmployee', data).then(function (res) {
+      var fullName = [res.employee.lastName, res.employee.firstName].filter(Boolean).join(' ');
+      if (res.emailSent) {
+        status.className = 'status ok';
+        status.textContent = 'Created ' + fullName + ' and sent the invitation email.';
+      } else {
+        status.className = 'status error';
+        status.textContent = 'Created ' + fullName + ', but email delivery FAILED: ' + (res.emailError || 'unknown error');
+      }
+      createForm.reset();
+      loadEmployees();
+    }).catch(function (err) {
+      status.className = 'status error';
+      status.textContent = err.message;
+    }).then(function () {
+      submitBtn.disabled = false;
+    });
+  });
+
+  // ---------- Employee list ----------
+  function loadEmployees() {
+    var table = $('#employees-table');
+    var empty = $('#employees-empty');
+    var loading = $('#employees-loading');
+    loading.className = 'status';
+    loading.textContent = 'Loading…';
+    loading.hidden = false; table.hidden = true; empty.hidden = true;
+    call('api_listEmployees').then(function (list) {
+      loading.hidden = true;
+      if (!list.length) { empty.hidden = false; return; }
+      var tbody = table.querySelector('tbody');
+      tbody.innerHTML = '';
+      list.forEach(function (e) {
+        var tr = document.createElement('tr');
+        var displayName = [e.lastName, e.firstName, e.middleName].filter(Boolean).join(' ');
+        tr.innerHTML =
+          '<td>' + esc(displayName) + '</td>' +
+          '<td>' + esc(e.email) + '</td>' +
+          '<td>' + formatMs(e.totalMs) + '</td>' +
+          '<td>' + (e.hasActiveSession ? '<span class="pill active">running</span>' : '<span class="pill">idle</span>') + '</td>' +
+          '<td><a class="link mono" href="' + esc(e.workspaceUrl) + '" target="_blank">' + esc(e.workspaceUrl || '(deploy script to show link)') + '</a></td>' +
+          '<td></td>';
+        var btn = el('button', { class: 'secondary', text: 'Details' });
+        btn.addEventListener('click', function () { showDetails(e.id); });
+        tr.lastElementChild.appendChild(btn);
+        tbody.appendChild(tr);
+      });
+      table.hidden = false;
+    }).catch(function (err) {
+      loading.className = 'status error';
+      loading.textContent = err.message;
+    });
+  }
+
+  // ---------- Details ----------
+  $('#details-close').addEventListener('click', function () {
+    $('#details-card').hidden = true;
+  });
+
+  function showDetails(id) {
+    var card = $('#details-card');
+    var content = $('#details-content');
+    card.hidden = false;
+    content.innerHTML = '<div class="status">Loading…</div>';
+    $('#details-name').textContent = 'Details';
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    call('api_getEmployeeDetails', id).then(renderDetails).catch(function (err) {
+      content.innerHTML = '<div class="status error">' + esc(err.message) + '</div>';
+    });
+  }
+
+  function renderDetails(d) {
+    var fullName = [d.employee.lastName, d.employee.firstName, d.employee.middleName].filter(Boolean).join(' ');
+    $('#details-name').textContent = fullName;
+    var content = $('#details-content');
+    content.innerHTML = '';
+
+    var head = el('div');
+    head.innerHTML =
+      '<div class="notice">Email: ' + esc(d.employee.email) + '</div>' +
+      '<div class="notice">Workspace link: <a class="link mono" href="' + esc(d.workspaceUrl) + '" target="_blank">' + esc(d.workspaceUrl || '(deploy script to show link)') + '</a></div>' +
+      '<div class="status">Total time: <strong>' + formatMs(d.totalMs) + '</strong> ' +
+      (d.activeSession ? '<span class="pill active">timer running</span>' : '') + '</div>';
+    content.appendChild(head);
+
+    // Assign task form
+    var form = el('form');
+    var input = el('input', { name: 'title', required: 'required', placeholder: 'New task title' });
+    form.appendChild(el('label', { text: 'Assign new task (closes any running session on the current task)' }, [input]));
+    var btn = el('button', { type: 'submit', class: 'primary', text: 'Assign task' });
+    form.appendChild(el('div', { class: 'row-wrap' }, [btn]));
+    var formStatus = el('div', { class: 'status' });
+    form.appendChild(formStatus);
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var title = input.value.trim();
+      if (!title) return;
+      btn.disabled = true;
+      formStatus.className = 'status';
+      formStatus.textContent = 'Assigning…';
+      call('api_assignTask', d.employee.id, title).then(function () {
+        showDetails(d.employee.id);
+        loadEmployees();
+      }).catch(function (err) {
+        btn.disabled = false;
+        formStatus.className = 'status error';
+        formStatus.textContent = err.message;
+      });
+    });
+    content.appendChild(form);
+
+    // Tasks
+    content.appendChild(el('h3', { text: 'Tasks' }));
+    if (!d.tasks.length) {
+      content.appendChild(el('div', { class: 'status', text: 'No tasks yet.' }));
+    } else {
+      var tt = el('table');
+      tt.innerHTML = '<thead><tr><th>Title</th><th>Status</th><th>Created</th><th>Closed</th></tr></thead>';
+      var tbody = el('tbody');
+      d.tasks.slice().sort(function (a, b) { return a.createdAt < b.createdAt ? 1 : -1; }).forEach(function (t) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + esc(t.title) + '</td>' +
+          '<td>' + statusPill(t.status) + '</td>' +
+          '<td>' + formatDateTime(t.createdAt) + '</td>' +
+          '<td>' + formatDateTime(t.completedAt) + '</td>';
+        tbody.appendChild(tr);
+      });
+      tt.appendChild(tbody);
+      content.appendChild(tt);
+    }
+
+    // Sessions
+    content.appendChild(el('h3', { text: 'Work sessions' }));
+    if (!d.sessions.length) {
+      content.appendChild(el('div', { class: 'status', text: 'No sessions yet.' }));
+    } else {
+      var st = el('table');
+      st.innerHTML = '<thead><tr><th>Task</th><th>Start</th><th>End</th><th>Duration</th><th>Status</th></tr></thead>';
+      var sbody = el('tbody');
+      var taskById = {};
+      d.tasks.forEach(function (t) { taskById[t.id] = t; });
+      d.sessions.slice().sort(function (a, b) { return a.startTime < b.startTime ? 1 : -1; }).forEach(function (s) {
+        var tr = document.createElement('tr');
+        var dur = Number(s.durationMs) || 0;
+        if (s.status === 'active') dur = Date.now() - new Date(s.startTime).getTime();
+        var task = taskById[s.taskId];
+        tr.innerHTML =
+          '<td>' + esc(task ? task.title : '(unknown)') + '</td>' +
+          '<td>' + formatDateTime(s.startTime) + '</td>' +
+          '<td>' + formatDateTime(s.endTime) + '</td>' +
+          '<td>' + formatMs(dur) + '</td>' +
+          '<td>' + statusPill(s.status) + '</td>';
+        sbody.appendChild(tr);
+      });
+      st.appendChild(sbody);
+      content.appendChild(st);
+    }
+  }
+
+  // ---------- Reports ----------
+  (function () {
+    var now = new Date();
+    var monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    var fmt = function (d) {
+      var y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate();
+      return y + '-' + (m < 10 ? '0' + m : m) + '-' + (day < 10 ? '0' + day : day);
+    };
+    $('input[name="from"]').value = fmt(monthAgo);
+    $('input[name="to"]').value = fmt(now);
+  }());
+
+  $('#report-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var fd = new FormData(ev.target);
+    var from = fd.get('from');
+    var to = fd.get('to');
+    var status = $('#report-status');
+    var content = $('#report-content');
+    status.className = 'status';
+    status.textContent = 'Generating…';
+    content.innerHTML = '';
+    call('api_generateReport', from, to).then(function (rows) {
+      status.className = 'status';
+      if (!rows.length) {
+        status.textContent = '';
+        content.innerHTML = '<div class="status">No activity in the selected period.</div>';
+        return;
+      }
+      status.textContent = 'Found ' + rows.length + ' employee' + (rows.length === 1 ? '' : 's') + ' with activity.';
+      rows.forEach(function (r) {
+        var card = el('div', { class: 'card' });
+        card.innerHTML =
+          '<div class="row-wrap" style="justify-content:space-between;">' +
+          '<h3 style="margin:0;">' + esc(r.name) + '</h3>' +
+          '<div class="status" style="margin:0;">Total in range: <strong>' + formatMs(r.totalMs) + '</strong></div>' +
+          '</div>';
+        if (r.sessions.length) {
+          var t = el('table');
+          t.innerHTML = '<thead><tr><th>Task</th><th>Start</th><th>End</th><th>In-range duration</th><th>Status</th></tr></thead>';
+          var tb = el('tbody');
+          r.sessions.forEach(function (s) {
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td>' + esc(s.taskTitle) + '</td>' +
+              '<td>' + formatDateTime(s.startTime) + '</td>' +
+              '<td>' + formatDateTime(s.endTime) + '</td>' +
+              '<td>' + formatMs(s.overlapMs) + '</td>' +
+              '<td>' + statusPill(s.status) + '</td>';
+            tb.appendChild(tr);
+          });
+          t.appendChild(tb);
+          card.appendChild(t);
+        } else {
+          card.appendChild(el('div', { class: 'status', text: 'No work sessions in range (tasks created in the period are shown below).' }));
+        }
+        if (r.tasks.length) {
+          card.appendChild(el('h3', { text: 'Tasks created in range' }));
+          var t2 = el('table');
+          t2.innerHTML = '<thead><tr><th>Title</th><th>Status</th><th>Created</th><th>Closed</th></tr></thead>';
+          var tb2 = el('tbody');
+          r.tasks.forEach(function (tk) {
+            var tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td>' + esc(tk.title) + '</td>' +
+              '<td>' + statusPill(tk.status) + '</td>' +
+              '<td>' + formatDateTime(tk.createdAt) + '</td>' +
+              '<td>' + formatDateTime(tk.completedAt) + '</td>';
+            tb2.appendChild(tr);
+          });
+          t2.appendChild(tb2);
+          card.appendChild(t2);
+        }
+        content.appendChild(card);
+      });
+    }).catch(function (err) {
+      status.className = 'status error';
+      status.textContent = err.message;
+    });
+  });
+
+  loadEmployees();
+})();
+</script>
