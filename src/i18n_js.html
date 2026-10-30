@@ -1,0 +1,107 @@
+<script>
+// Client i18n runtime shared by the Manager and the employee workspace.
+// The dictionaries (I18N) and the language rules (resolveLanguage) come from
+// src/i18n.gs, so there is exactly one copy of each. Business logic is never
+// duplicated per language: only text is looked up here.
+(function () {
+  'use strict';
+  var STORE_KEY = 'wtt.lang';
+  var I = window.WTT_DICT;
+  var current = 'en';
+  var listeners = [];
+
+  function readStored() {
+    try { return window.localStorage.getItem(STORE_KEY); } catch (e) { return null; }
+  }
+  function writeStored(v) {
+    try { window.localStorage.setItem(STORE_KEY, v); } catch (e) { /* storage may be blocked; the choice then lasts for this page only */ }
+  }
+
+  function t(key, params) {
+    var s = (I[current] && I[current][key]);
+    if (s === undefined) s = I.en[key];
+    if (s === undefined) return key;
+    if (params) {
+      s = s.replace(/\{(\w+)\}/g, function (m, k) { return params[k] !== undefined ? params[k] : m; });
+    }
+    return s;
+  }
+
+  function locale() { return current === 'ru' ? 'ru-RU' : 'en-GB'; }
+
+  function apply(root) {
+    root = root || document;
+    var nodes = root.querySelectorAll('[data-i18n]');
+    for (var i = 0; i < nodes.length; i++) nodes[i].textContent = t(nodes[i].getAttribute('data-i18n'));
+    var attrs = [['data-i18n-ph', 'placeholder'], ['data-i18n-title', 'title'], ['data-i18n-aria', 'aria-label']];
+    attrs.forEach(function (pair) {
+      var els = root.querySelectorAll('[' + pair[0] + ']');
+      for (var j = 0; j < els.length; j++) els[j].setAttribute(pair[1], t(els[j].getAttribute(pair[0])));
+    });
+    document.documentElement.lang = current;
+    var titleKey = document.body && document.body.getAttribute('data-title-key');
+    if (titleKey) document.title = t(titleKey);
+  }
+
+  function setLang(lang, persist) {
+    if (lang !== 'ru' && lang !== 'en') lang = 'en';
+    current = lang;
+    if (persist !== false) {
+      writeStored(lang);
+      // Also keep the choice in the page URL (?lang=): it survives reloads even
+      // where the browser blocks storage inside the Apps Script frame.
+      try { google.script.history.replace(null, { lang: lang }); } catch (e) { /* not available outside Apps Script */ }
+    }
+    apply(document);
+    var sel = document.getElementById('lang-select');
+    if (sel && sel.value !== lang) sel.value = lang;
+    listeners.forEach(function (fn) { try { fn(lang); } catch (e) { /* a listener failure must not block others */ } });
+  }
+
+  // Server errors arrive as "@@code@@{json params}@@English fallback".
+  function errorText(err) {
+    var m = String((err && err.message) || err || '');
+    var mm = /^(?:Error: )?@@([A-Za-z0-9_]+)@@(.*?)@@([\s\S]*)$/.exec(m);
+    if (!mm) return m.replace(/^Error: /, '');
+    var params = {};
+    try { params = JSON.parse(mm[2] || '{}'); } catch (e) { params = {}; }
+    if (params.field) params.field = t('field.' + params.field);
+    var key = 'err.' + mm[1];
+    return (I.en[key] === undefined) ? mm[3] : t(key, params);
+  }
+
+  function fmtMs(ms) {
+    ms = Math.max(0, Math.floor(Number(ms) || 0));
+    var s = Math.floor(ms / 1000);
+    return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map(function (x) { return String(x).padStart(2, '0'); }).join(':');
+  }
+
+  // All stored timestamps are UTC and all report boundaries are UTC days, so
+  // times are shown in UTC everywhere (never in the viewer's local zone).
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString(locale(), { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) + ' UTC';
+  }
+  function fmtDate(ymd) {
+    var d = new Date(ymd + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return String(ymd);
+    return d.toLocaleDateString(locale(), { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
+  }
+
+  function init(urlLang) {
+    var chosen = window.WTT_RESOLVE_LANG({ stored: readStored(), param: urlLang, browser: (navigator.languages && navigator.languages[0]) || navigator.language });
+    setLang(chosen, false);
+    var sel = document.getElementById('lang-select');
+    if (sel) sel.addEventListener('change', function () { setLang(sel.value, true); });
+  }
+
+  window.WTT = {
+    t: t, apply: apply, setLang: setLang, init: init, errorText: errorText,
+    fmtMs: fmtMs, fmtDateTime: fmtDateTime, fmtDate: fmtDate, locale: locale,
+    lang: function () { return current; },
+    onChange: function (fn) { listeners.push(fn); }
+  };
+})();
+</script>

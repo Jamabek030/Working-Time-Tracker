@@ -17,6 +17,7 @@ function setupSheets_(ctx) {
     ensureSheet_(ss, ctx.sheets.EMPLOYEES, DEFAULT_CONFIG.HEADERS.EMPLOYEES);
     ensureSheet_(ss, ctx.sheets.TASKS, DEFAULT_CONFIG.HEADERS.TASKS);
     ensureSheet_(ss, ctx.sheets.SESSIONS, DEFAULT_CONFIG.HEADERS.SESSIONS);
+    if (ctx.sheets.INVITES) ensureSheet_(ss, ctx.sheets.INVITES, DEFAULT_CONFIG.HEADERS.INVITES);
     return 'OK';
   } finally {
     lock.releaseLock();

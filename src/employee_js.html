@@ -2,32 +2,24 @@
 (function () {
   'use strict';
 
+  var T = WTT.t;
   function $(sel) { return document.querySelector(sel); }
-  function esc(s) {
-    return String(s === undefined || s === null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-  function formatMs(ms) {
-    ms = Math.max(0, Math.floor(Number(ms) || 0));
-    var s = Math.floor(ms / 1000);
-    var h = Math.floor(s / 3600);
-    var m = Math.floor((s % 3600) / 60);
-    var sec = s % 60;
-    return [h, m, sec].map(function (x) { return String(x).padStart(2, '0'); }).join(':');
-  }
-  function formatDateTime(iso) {
-    if (!iso) return '—';
-    try { return new Date(iso).toLocaleString(); } catch (e) { return String(iso); }
-  }
-  function statusPill(status) {
-    return '<span class="pill ' + esc(status) + '">' + esc(status || '—') + '</span>';
+  function h(tag, props, kids) {
+    var e = document.createElement(tag);
+    props = props || {};
+    Object.keys(props).forEach(function (k) {
+      if (props[k] === undefined || props[k] === null || props[k] === false) return;
+      if (k === 'text') e.textContent = props[k]; else if (k === 'class') e.className = props[k]; else e.setAttribute(k, props[k]);
+    });
+    (kids || []).forEach(function (c) { if (c) e.appendChild(c); });
+    return e;
   }
   function call(fn) {
     var args = Array.prototype.slice.call(arguments, 1);
     return new Promise(function (resolve, reject) {
       var runner = google.script.run
         .withSuccessHandler(resolve)
-        .withFailureHandler(function (err) { reject(new Error(err && err.message ? err.message : String(err))); });
+        .withFailureHandler(function (err) { reject(new Error(WTT.errorText(err))); });
       runner[fn].apply(runner, args);
     });
   }
@@ -48,114 +40,100 @@
     statusEl.className = 'status' + (kind ? ' ' + kind : '');
     statusEl.textContent = msg || '';
   }
-
-  function stopTicking() {
-    if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
-  }
-
-  function startTicking() {
-    stopTicking();
-    tickHandle = setInterval(renderTimer, 1000);
-    renderTimer();
-  }
+  function stopTicking() { if (tickHandle) { clearInterval(tickHandle); tickHandle = null; } }
+  function startTicking() { stopTicking(); tickHandle = setInterval(renderTimer, 1000); renderTimer(); }
 
   function renderTimer() {
-    if (!state || !state.activeTask) {
-      timerDisplay.textContent = '00:00:00';
-      return;
-    }
+    if (!state || !state.activeTask) { timerDisplay.textContent = '00:00:00'; return; }
     var base = Number(state.totalMsForActiveTask) || 0;
     var extra = state.activeSession ? (Date.now() - fetchedAt) : 0;
-    timerDisplay.textContent = formatMs(base + extra);
+    timerDisplay.textContent = WTT.fmtMs(base + extra);
   }
 
   function renderButtons() {
     btnStart.hidden = btnPause.hidden = btnResume.hidden = btnFinish.hidden = true;
     if (!state || !state.activeTask) return;
-    if (state.activeSession) {
-      btnPause.hidden = false;
-      btnFinish.hidden = false;
-      return;
-    }
+    if (state.activeSession) { btnPause.hidden = false; btnFinish.hidden = false; return; }
     var hasPrior = (state.sessions || []).some(function (s) { return s.taskId === state.activeTask.id; });
     if (hasPrior) btnResume.hidden = false; else btnStart.hidden = false;
     btnFinish.hidden = false;
   }
 
   function renderTaskTitle() {
-    if (!state || !state.activeTask) {
-      taskTitle.textContent = 'No active task. Ask your manager to assign one.';
-    } else {
-      taskTitle.textContent = state.activeTask.title;
-    }
+    taskTitle.removeAttribute('data-i18n');
+    taskTitle.textContent = (!state || !state.activeTask) ? T('ws.noTask') : state.activeTask.title;
   }
 
   function renderHistory() {
-    var table = $('#history-table');
-    var empty = $('#history-empty');
-    var loading = $('#history-loading');
-    loading.hidden = true;
+    var table = $('#history-table'), empty = $('#history-empty');
+    $('#history-loading').hidden = true;
     var sessions = (state && state.sessions) || [];
-    if (!sessions.length) {
-      table.hidden = true; empty.hidden = false; return;
-    }
+    if (!sessions.length) { table.hidden = true; empty.hidden = false; return; }
     empty.hidden = true;
     var taskById = {};
     (state.tasks || []).forEach(function (t) { taskById[t.id] = t; });
     var tbody = table.querySelector('tbody');
-    tbody.innerHTML = '';
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
     sessions.slice().sort(function (a, b) { return a.startTime < b.startTime ? 1 : -1; }).forEach(function (s) {
-      var tr = document.createElement('tr');
       var dur = Number(s.durationMs) || 0;
       if (s.status === 'active') dur = Date.now() - new Date(s.startTime).getTime();
       var task = taskById[s.taskId];
-      tr.innerHTML =
-        '<td>' + esc(task ? task.title : '(unknown)') + '</td>' +
-        '<td>' + formatDateTime(s.startTime) + '</td>' +
-        '<td>' + formatDateTime(s.endTime) + '</td>' +
-        '<td>' + formatMs(dur) + '</td>' +
-        '<td>' + statusPill(s.status) + '</td>';
-      tbody.appendChild(tr);
+      tbody.appendChild(h('tr', {}, [
+        h('td', { 'data-label': T('col.task'), text: task ? task.title : T('common.unknown') }),
+        h('td', { 'data-label': T('col.start'), text: WTT.fmtDateTime(s.startTime) }),
+        h('td', { 'data-label': T('col.end'), text: WTT.fmtDateTime(s.endTime) }),
+        h('td', { 'data-label': T('col.duration'), text: WTT.fmtMs(dur) }),
+        h('td', { 'data-label': T('col.status') }, [h('span', { class: 'pill ' + s.status, text: T('status.' + s.status) })])
+      ]));
     });
     table.hidden = false;
+  }
+
+  function renderAll() {
+    renderTaskTitle(); renderButtons(); renderHistory();
+    if (state && state.activeSession) startTicking(); else { stopTicking(); renderTimer(); }
   }
 
   function refresh() {
     return call('api_getEmployeeState', WORKSPACE_TOKEN).then(function (s) {
       state = s;
       fetchedAt = Date.now();
-      renderTaskTitle();
-      renderButtons();
-      renderHistory();
-      if (state.activeSession) startTicking(); else { stopTicking(); renderTimer(); }
+      renderAll();
       setStatus('');
     }).catch(function (err) {
+      $('#history-loading').hidden = true;
+      taskTitle.removeAttribute('data-i18n');
+      taskTitle.textContent = T('ws.unavailable');
       setStatus(err.message, 'error');
     });
   }
 
-  function action(fn, label) {
-    setStatus(label + '…');
+  function action(fn, labelKey) {
+    setStatus(T(labelKey));
     [btnStart, btnPause, btnResume, btnFinish].forEach(function (b) { b.disabled = true; });
-    return call(fn, WORKSPACE_TOKEN).then(function () {
-      return refresh();
-    }).catch(function (err) {
+    return call(fn, WORKSPACE_TOKEN).then(function () { return refresh(); }).catch(function (err) {
       setStatus(err.message, 'error');
-    }).then(function () {
-      [btnStart, btnPause, btnResume, btnFinish].forEach(function (b) { b.disabled = false; });
-    });
+    }).then(function () { [btnStart, btnPause, btnResume, btnFinish].forEach(function (b) { b.disabled = false; }); });
   }
 
-  btnStart.addEventListener('click', function () { action('api_startSession', 'Starting'); });
-  btnResume.addEventListener('click', function () { action('api_resumeSession', 'Resuming'); });
-  btnPause.addEventListener('click', function () { action('api_pauseSession', 'Pausing'); });
+  btnStart.addEventListener('click', function () { action('api_startSession', 'ws.starting'); });
+  btnResume.addEventListener('click', function () { action('api_resumeSession', 'ws.resuming'); });
+  btnPause.addEventListener('click', function () { action('api_pauseSession', 'ws.pausing'); });
   btnFinish.addEventListener('click', function () {
-    if (!confirm('Finish the current task? It will be marked completed and the timer will stop.')) return;
-    action('api_finishTask', 'Finishing');
+    if (!confirm(T('ws.finishConfirm'))) return;
+    action('api_finishTask', 'ws.finishing');
   });
 
-  refresh();
-  // Resync every minute so changes a manager makes show up without a page reload.
-  setInterval(refresh, 60000);
+  WTT.onChange(function () { if (state) renderAll(); });
+
+  function boot(urlLang) {
+    WTT.init(urlLang);
+    refresh();
+    // Resync every minute so changes a manager makes show up without a reload.
+    setInterval(refresh, 60000);
+  }
+  try {
+    google.script.url.getLocation(function (loc) { boot(loc && loc.parameter && loc.parameter.lang && String(loc.parameter.lang)); });
+  } catch (e) { boot(null); }
 })();
 </script>

@@ -1,53 +1,73 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <base target="_top">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <?!= include_('styles'); ?>
 </head>
-<body>
-<header>
-  <div class="container">
-    <h1>Workspace — <?= employee.firstName ?> <?= employee.lastName ?></h1>
-    <div class="notice">Personal workspace link. Anyone who has this link can use this workspace, so keep it private. If the link leaks, ask your manager to rotate it.</div>
-  </div>
-</header>
-<main class="container">
-  <div class="card">
-    <h2 id="task-title">Loading…</h2>
-    <div class="timer-row">
-      <div class="timer-display" id="timer-display">00:00:00</div>
-      <div class="actions">
-        <button type="button" id="btn-start" class="primary" hidden>Start</button>
-        <button type="button" id="btn-pause" class="warn" hidden>Pause</button>
-        <button type="button" id="btn-resume" class="primary" hidden>Resume</button>
-        <button type="button" id="btn-finish" class="danger" hidden>Finish task</button>
+<body data-title-key="app.title">
+<a class="skip" href="#main" data-i18n="a11y.skip">Skip to content</a>
+<header class="app-header">
+  <div class="container header-row">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">WT</span>
+      <div>
+        <h1><span data-i18n="ws.heading">Workspace</span> — <?= employee.firstName ?> <?= employee.lastName ?></h1>
+        <p class="subtitle" data-i18n="app.subtitle.employee">Employee workspace</p>
       </div>
     </div>
-    <div id="status" class="status"></div>
+    <div class="header-tools">
+      <label for="lang-select" class="sr-only" data-i18n="lang.label">Language</label>
+      <select id="lang-select" class="lang-select">
+        <option value="ru">Русский</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+  </div>
+  <div class="container"><div class="notice" data-i18n="ws.notice">Personal workspace link. Anyone who has this link can use this workspace, so keep it private. If the link leaks, ask your manager to rotate it. This page cannot open the Manager console.</div></div>
+</header>
+<main id="main" class="container">
+  <div class="card">
+    <div class="muted small" data-i18n="ws.currentTask">Current task</div>
+    <h2 id="task-title" class="task-big" data-i18n="common.loading">Loading…</h2>
+    <div class="timer-row">
+      <div class="timer-display" id="timer-display" role="timer" aria-live="off">00:00:00</div>
+      <div class="actions">
+        <button type="button" id="btn-start" class="primary" hidden data-i18n="ws.start">Start</button>
+        <button type="button" id="btn-pause" class="warn" hidden data-i18n="ws.pause">Pause</button>
+        <button type="button" id="btn-resume" class="primary" hidden data-i18n="ws.resume">Resume</button>
+        <button type="button" id="btn-finish" class="danger" hidden data-i18n="ws.finish">Finish task</button>
+      </div>
+    </div>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
   </div>
 
   <div class="card">
-    <h2>Work history</h2>
-    <div id="history-loading" class="status">Loading…</div>
-    <div id="history-empty" class="status" hidden>No work sessions recorded yet.</div>
-    <table id="history-table" hidden>
+    <h2 data-i18n="ws.history">Work history</h2>
+    <div id="history-loading" class="status" data-i18n="common.loading">Loading…</div>
+    <div id="history-empty" class="status" hidden data-i18n="ws.historyEmpty">No work sessions recorded yet.</div>
+    <div class="table-wrap"><table id="history-table" class="stack" hidden>
       <thead>
         <tr>
-          <th>Task</th>
-          <th>Start</th>
-          <th>End</th>
-          <th>Duration</th>
-          <th>Status</th>
+          <th data-i18n="col.task">Task</th>
+          <th data-i18n="col.start">Start</th>
+          <th data-i18n="col.end">End</th>
+          <th data-i18n="col.duration">Duration</th>
+          <th data-i18n="col.status">Status</th>
         </tr>
       </thead>
       <tbody></tbody>
-    </table>
+    </table></div>
   </div>
 </main>
+<footer class="container footer"><span data-i18n="footer.note">Demonstration with fictional data. Times are shown in UTC.</span></footer>
 <script>
   var WORKSPACE_TOKEN = <?!= workspaceTokenJs ?>;
 </script>
+<script>window.WTT_DICT = <?!= jsonForScript_(I18N) ?>;
+window.WTT_RESOLVE_LANG = <?!= resolveLanguage.toString() ?>;</script>
+<?!= include_('i18n_js'); ?>
 <?!= include_('employee_js'); ?>
 </body>
 </html>

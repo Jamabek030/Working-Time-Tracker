@@ -10,7 +10,8 @@ var TEST_CTX = {
   sheets: {
     EMPLOYEES: 'Test_Employees',
     TASKS: 'Test_Tasks',
-    SESSIONS: 'Test_WorkSessions'
+    SESSIONS: 'Test_WorkSessions',
+    INVITES: 'Test_Invitations'
   },
   headers: DEFAULT_CONFIG.HEADERS
 };
@@ -44,10 +45,20 @@ function runTests() {
     test_demoSampleLoadsOnlyIntoEmptyDemo_,
     test_demoSampleReportsMatchSessions_,
     test_demoSampleKeepsTaskHistory_,
-    test_demoEmailIsHardDisabled_,
+    test_emailKillSwitchStopsAllSending_,
     test_adminFunctionsRefuseWhenNotArmed_,
     test_adminArmingIsConsumedOnUse_,
-    test_validationMessagesAreUserSafe_
+    test_validationMessagesAreUserSafe_,
+    test_inviteSentThroughDoubleWithCorrectLink_,
+    test_inviteFailureKeepsEmployeeAndCanBeRetried_,
+    test_inviteNeverMailsReservedAddresses_,
+    test_inviteDailyAndRecipientLimits_,
+    test_inviteTextCannotInjectHeadersOrLines_,
+    test_dashboardAgreesWithReports_,
+    test_dashboardWorkingAndPausedStates_,
+    test_csvExportMatchesReportAndNeutralisesFormulas_,
+    test_cleanupRemovesOnlyAcceptanceArtifacts_,
+    test_cleanupRefusesWhenNotArmed_
   ];
 
   // Create the Test_* sheets. ensureSheet_ runs idempotently.
@@ -77,7 +88,7 @@ function runTests() {
 
 function resetTestSheets_() {
   var ss = getSpreadsheet_();
-  [TEST_CTX.sheets.EMPLOYEES, TEST_CTX.sheets.TASKS, TEST_CTX.sheets.SESSIONS].forEach(function (name) {
+  [TEST_CTX.sheets.EMPLOYEES, TEST_CTX.sheets.TASKS, TEST_CTX.sheets.SESSIONS, TEST_CTX.sheets.INVITES].forEach(function (name) {
     var sheet = ss.getSheetByName(name);
     if (!sheet) return;
     var lastRow = sheet.getLastRow();
@@ -412,18 +423,25 @@ function test_demoSampleKeepsTaskHistory_() {
   assertEq_(sessions_forEmployee_(alex.id, TEST_CTX).length, sessionsBefore, 'sessions preserved');
 }
 
-function test_demoEmailIsHardDisabled_() {
-  if (!DEMO_CONFIG.ENABLED) return;
-  var err = assertThrows_(function () {
-    email_sendInvitation_({ email: 'victim@example.com', firstName: 'X', workspaceToken: 'abc' }, 'T');
-  }, 'demo build must not send mail');
-  assert_(/disabled/i.test(err.message), 'explains that email is disabled');
+function test_emailKillSwitchStopsAllSending_() {
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('EMAIL_DISABLED', 'true');
+  try {
+    withMailDouble_(function (sent) {
+      var emp = newPerson_('qa.kill@corp-demo.io');
+      assertEq_(email_sendInvitation_(emp, 'T', 'en', TEST_CTX).status, 'disabled');
+      assertEq_(sent.length, 0, 'nothing reaches the sender while the kill switch is on');
+      assertEq_(email_capability_().enabled, false);
+    });
+  } finally {
+    props.deleteProperty('EMAIL_DISABLED');
+  }
 }
 
 function test_adminFunctionsRefuseWhenNotArmed_() {
   // runTests consumed ADMIN_MODE when it started, so it is absent here.
   assertEq_(PropertiesService.getScriptProperties().getProperty('ADMIN_MODE'), null, 'precondition: not armed');
-  var guarded = { resetDemoData: resetDemoData, enableOpenAccess: enableOpenAccess, disableOpenAccess: disableOpenAccess };
+  var guarded = { resetDemoData: resetDemoData, enableOpenAccess: enableOpenAccess, disableOpenAccess: disableOpenAccess, cleanupTestArtifacts: cleanupTestArtifacts };
   Object.keys(guarded).forEach(function (name) {
     var err = assertThrows_(function () { guarded[name](); }, name + ' must refuse while disarmed');
     assert_(/not armed/.test(err.message), name + ' reports it is not armed');
@@ -459,4 +477,170 @@ function test_validationMessagesAreUserSafe_() {
   assert_(err.userSafe === true, 'length error is surfaced verbatim, not as a generic server error');
   var err2 = assertThrows_(function () { reports_generate_('2026-13-01', '2026-13-02', TEST_CTX); }, 'bad date');
   assert_(err2.userSafe === true, 'date error is user-safe');
+}
+
+// --- invitations, dashboard, CSV, cleanup (no real mail is ever sent: every test
+//     that reaches the delivery step installs the mailSender_ test double) ------
+
+function withMailDouble_(fn, behaviour) {
+  var sent = [];
+  mailSender_ = function (msg) {
+    if (behaviour === 'throw') throw new Error('Service invoked too many times for one day: email.');
+    sent.push(msg);
+  };
+  try { fn(sent); } finally { mailSender_ = null; }
+}
+
+function newPerson_(email, first) {
+  return employees_create_({ lastName: 'Tester', firstName: first || 'Pat', email: email, initialTask: 'Write the weekly summary' }, TEST_CTX);
+}
+
+function test_inviteSentThroughDoubleWithCorrectLink_() {
+  withMailDouble_(function (sent) {
+    var emp = newPerson_('qa.person@corp-demo.io', 'Анна');
+    var res = email_sendInvitation_(emp, 'Write the weekly summary', 'ru', TEST_CTX);
+    assertEq_(res.status, 'sent');
+    assertEq_(sent.length, 1, 'exactly one message handed to the sender');
+    assertEq_(sent[0].to, 'qa.person@corp-demo.io');
+    assert_(sent[0].body.indexOf('token=' + emp.workspaceToken) >= 0, 'body carries this employee\'s workspace link');
+    assert_(sent[0].body.indexOf('lang=ru') >= 0, 'link carries the language');
+    assert_(sent[0].body.indexOf('Анна') >= 0 && sent[0].body.indexOf('Write the weekly summary') >= 0, 'name and task included as plain text');
+    assertEq_(/<[a-z]/i.test(sent[0].body), false, 'plain text only');
+    assertEq_(invites_latestByEmployee_(TEST_CTX)[emp.id].status, 'sent', 'attempt recorded');
+    var logged = JSON.stringify(invites_list_(TEST_CTX));
+    assertEq_(logged.indexOf(emp.workspaceToken), -1, 'token never written to the log');
+    assertEq_(logged.indexOf('qa.person@corp-demo.io'), -1, 'address not duplicated in the log');
+  });
+}
+
+function test_inviteFailureKeepsEmployeeAndCanBeRetried_() {
+  var emp = newPerson_('qa.retry@corp-demo.io');
+  withMailDouble_(function () {
+    var res = email_sendInvitation_(emp, 'T', 'en', TEST_CTX);
+    assertEq_(res.status, 'failed');
+  }, 'throw');
+  assertEq_(employees_findById_(emp.id, TEST_CTX).email, 'qa.retry@corp-demo.io', 'employee record preserved');
+  assertEq_(invites_latestByEmployee_(TEST_CTX)[emp.id].status, 'failed');
+  assertEq_(JSON.stringify(invites_list_(TEST_CTX)).indexOf(emp.workspaceToken), -1, 'no token in the failure detail');
+  withMailDouble_(function (sent) {
+    assertEq_(email_sendInvitation_(emp, 'T', 'en', TEST_CTX).status, 'sent', 'retry succeeds');
+    assertEq_(sent.length, 1);
+  });
+}
+
+function test_inviteNeverMailsReservedAddresses_() {
+  withMailDouble_(function (sent) {
+    var emp = newPerson_('someone@example.com');
+    assertEq_(email_sendInvitation_(emp, 'T', 'en', TEST_CTX).status, 'skipped_reserved');
+    assertEq_(sent.length, 0);
+  });
+}
+
+function test_inviteDailyAndRecipientLimits_() {
+  var cfg = DEMO_CONFIG.EMAIL;
+  var saved = { d: cfg.DAILY_LIMIT, r: cfg.PER_RECIPIENT_DAILY };
+  try {
+    cfg.DAILY_LIMIT = 2; cfg.PER_RECIPIENT_DAILY = 1;
+    withMailDouble_(function (sent) {
+      var a = newPerson_('qa.a@corp-demo.io'), b = newPerson_('qa.b@corp-demo.io'), c = newPerson_('qa.c@corp-demo.io');
+      assertEq_(email_sendInvitation_(a, 'T', 'en', TEST_CTX).status, 'sent');
+      assertEq_(email_sendInvitation_(a, 'T', 'en', TEST_CTX).status, 'limit_recipient', 'second mail to the same address refused');
+      assertEq_(email_sendInvitation_(b, 'T', 'en', TEST_CTX).status, 'sent');
+      assertEq_(email_sendInvitation_(c, 'T', 'en', TEST_CTX).status, 'limit_global', 'global cap reached');
+      assertEq_(sent.length, 2, 'only two messages ever reached the sender');
+    });
+  } finally {
+    cfg.DAILY_LIMIT = saved.d; cfg.PER_RECIPIENT_DAILY = saved.r;
+  }
+}
+
+function test_inviteTextCannotInjectHeadersOrLines_() {
+  withMailDouble_(function (sent) {
+    var emp = employees_create_({ lastName: 'X', firstName: 'Bob\r\nBcc: attacker@evil.example', email: 'qa.inject@corp-demo.io', initialTask: 'Task\r\nSubject: pwned' }, TEST_CTX);
+    email_sendInvitation_(emp, 'Task\r\nSubject: pwned', 'en', TEST_CTX);
+    assertEq_(sent.length, 1);
+    assertEq_(/\n(Bcc|Subject):/i.test(sent[0].body), false, 'no injected header-looking line');
+    assertEq_(sent[0].subject.indexOf('\n'), -1);
+  });
+}
+
+function test_dashboardAgreesWithReports_() {
+  demo_seed_(TEST_CTX);
+  var now = Date.now();
+  var from = ymdUtc(now - 10 * 86400000), to = ymdUtc(now);
+  var d = dashboard_get_(from, to, TEST_CTX);
+  var rows = reports_generate_(from, to, TEST_CTX);
+  var reportTotal = 0;
+  rows.forEach(function (r) { reportTotal += r.totalMs; });
+  assertEq_(d.metrics.trackedMs, reportTotal, 'dashboard total equals the report total');
+  var dailyTotal = 0;
+  d.daily.forEach(function (x) { dailyTotal += x.ms; });
+  assertEq_(dailyTotal, reportTotal, 'daily buckets sum to the same total');
+  assertEq_(d.daily.length, 11, 'one bucket per UTC day');
+  var byEmp = 0;
+  d.byEmployee.forEach(function (x) { byEmp += x.ms; });
+  assertEq_(byEmp, reportTotal, 'by-employee rows sum to the same total');
+  assertEq_([d.metrics.totalEmployees, d.metrics.activeTasks, d.metrics.completedTasks, d.metrics.working, d.metrics.paused].join(','), '2,2,1,0,2');
+  var empty = dashboard_get_('2000-01-01', '2000-01-03', TEST_CTX);
+  assertEq_(empty.metrics.trackedMs, 0, 'empty period');
+  assertEq_(empty.daily.length, 3);
+  assertThrows_(function () { dashboard_get_('2000-01-01', '2100-01-01', TEST_CTX); }, 'overlong range refused');
+}
+
+function test_dashboardWorkingAndPausedStates_() {
+  var emp = newPerson_('qa.state@corp-demo.io');
+  var today = ymdUtc(Date.now());
+  assertEq_(dashboard_get_(today, today, TEST_CTX).metrics.working, 0);
+  sessions_start_(emp.id, TEST_CTX);
+  assertEq_(dashboard_get_(today, today, TEST_CTX).metrics.working, 1, 'running timer counts as working');
+  sessions_pause_(emp.id, TEST_CTX);
+  var m = dashboard_get_(today, today, TEST_CTX).metrics;
+  assertEq_([m.working, m.paused].join(','), '0,1', 'paused after pause');
+}
+
+function test_csvExportMatchesReportAndNeutralisesFormulas_() {
+  demo_seed_(TEST_CTX);
+  var evil = employees_create_({ lastName: '=1+1', firstName: '@SUM(A1)', email: 'qa.csv@corp-demo.io', initialTask: '-cmd|calc' }, TEST_CTX);
+  var task = tasks_getActive_(evil.id, TEST_CTX);
+  var s = new Date(Date.now() - 3600000).toISOString(), e = new Date(Date.now() - 1800000).toISOString();
+  appendRow_(TEST_CTX.sheets.SESSIONS, { id: uuid_(), employeeId: evil.id, taskId: task.id, startTime: s, endTime: e, durationMs: 1800000, status: 'paused' }, DEFAULT_CONFIG.HEADERS.SESSIONS);
+  var from = ymdUtc(Date.now() - 10 * 86400000), to = ymdUtc(Date.now());
+  var res = reports_csv_(from, to, '', 'ru', TEST_CTX);
+  var rows = reports_generate_(from, to, TEST_CTX);
+  var n = 0;
+  rows.forEach(function (r) { n += r.sessions.length; });
+  assertEq_(res.rows, n, 'one CSV line per reported session');
+  assertEq_(res.csv.split('\r\n').filter(function (l) { return l; }).length, n + 1, 'header + rows');
+  assertEq_(res.csv.charCodeAt(0), 0xFEFF, 'BOM for spreadsheet applications');
+  assert_(res.csv.indexOf('Сотрудник') >= 0, 'localized header');
+  assertEq_(res.csv.indexOf('"=1+1'), -1, 'raw formula not present');
+  assert_(res.csv.indexOf('"\'=1+1') >= 0, 'formula neutralised');
+  assert_(res.csv.indexOf('"\'-cmd|calc"') >= 0, 'task text neutralised');
+  var only = reports_csv_(from, to, evil.id, 'en', TEST_CTX);
+  assertEq_(only.rows, 1, 'employee filter respected');
+  assertEq_(res.filename, 'working-time-report_' + from + '_' + to + '.csv');
+}
+
+function test_cleanupRemovesOnlyAcceptanceArtifacts_() {
+  var junk = employees_create_({ lastName: 'Verifier', firstName: 'Demo', email: 'demo.verifier.1700000000000@example.com', initialTask: 'x' }, TEST_CTX);
+  var inj = employees_create_({ lastName: '=HYPERLINK("http://evil","x")', firstName: '+1', email: 'inj.verifier@example.com', initialTask: '@cmd' }, TEST_CTX);
+  var keep = employees_create_({ lastName: 'Verifier', firstName: 'Keep', email: 'keep.me@corp-demo.io', initialTask: 'real work' }, TEST_CTX);
+  var keep2 = employees_create_({ lastName: 'Demo', firstName: 'Verifier', email: 'demo.verifier@example.com', initialTask: 'near miss' }, TEST_CTX);
+  [junk, inj, keep].forEach(function (x) {
+    var t = tasks_getActive_(x.id, TEST_CTX);
+    appendRow_(TEST_CTX.sheets.SESSIONS, { id: uuid_(), employeeId: x.id, taskId: t.id, startTime: '2026-01-01T10:00:00.000Z', endTime: '2026-01-01T10:10:00.000Z', durationMs: 600000, status: 'paused' }, DEFAULT_CONFIG.HEADERS.SESSIONS);
+  });
+  var removed = demo_cleanup_(TEST_CTX);
+  assertEq_(removed.employees, 2);
+  assertEq_(removed.tasks, 2);
+  assertEq_(removed.sessions, 2);
+  var left = employees_list_(TEST_CTX).map(function (x) { return x.email; }).sort();
+  assertEq_(left.join('|'), 'demo.verifier@example.com|keep.me@corp-demo.io', 'only the exact fictional patterns were removed');
+  assertEq_(sessions_forEmployee_(keep.id, TEST_CTX).length, 1, 'kept employee keeps their sessions');
+  assert_(keep2.id, 'near-miss address untouched');
+}
+
+function test_cleanupRefusesWhenNotArmed_() {
+  var err = assertThrows_(function () { cleanupTestArtifacts(); }, 'cleanupTestArtifacts must refuse while disarmed');
+  assert_(/not armed/.test(err.message), 'reports it is not armed');
 }

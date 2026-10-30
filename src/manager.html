@@ -1,93 +1,174 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <base target="_top">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <?!= include_('styles'); ?>
 </head>
-<body>
-<header>
-  <div class="container">
-    <h1>Working Time Tracker — Manager</h1>
-    <? if (demoMode) { ?>
-    <div class="banner"><strong>Public demonstration.</strong> Use fictional data only &mdash; anyone with this URL can see and change everything here, and the data may be reset at any time. No email is ever sent. To run a timer, open an employee's <em>Details</em> and use the workspace link.</div>
-    <? } else { ?>
-    <div class="notice">Shared manager console. This page is not protected by authentication; anyone with the URL can use it. Share it only with managers. Workspace links for individual employees are shown only in Details.</div>
-    <? } ?>
+<body data-title-key="app.title">
+<a class="skip" href="#main" data-i18n="a11y.skip">Skip to content</a>
+<header class="app-header">
+  <div class="container header-row">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">WT</span>
+      <div>
+        <h1 data-i18n="app.title">Working Time Tracker</h1>
+        <p class="subtitle" data-i18n="app.subtitle.manager">Manager console</p>
+      </div>
+    </div>
+    <div class="header-tools">
+      <label for="lang-select" class="sr-only" data-i18n="lang.label">Language</label>
+      <select id="lang-select" class="lang-select">
+        <option value="ru">Русский</option>
+        <option value="en">English</option>
+      </select>
+    </div>
   </div>
+  <? if (demoMode) { ?>
+  <div class="container"><div class="banner" id="demo-banner" role="note" data-i18n="demo.banner"></div></div>
+  <? } ?>
 </header>
-<main class="container">
-  <nav class="tabs">
-    <button type="button" class="tab active" data-tab="employees">Employees</button>
-    <button type="button" class="tab" data-tab="reports">Reports</button>
+
+<main id="main" class="container">
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button type="button" class="tab active" role="tab" id="tabbtn-dashboard" data-tab="dashboard" aria-selected="true" aria-controls="tab-dashboard" data-i18n="nav.dashboard">Dashboard</button>
+    <button type="button" class="tab" role="tab" id="tabbtn-employees" data-tab="employees" aria-selected="false" aria-controls="tab-employees" data-i18n="nav.employees">Employees</button>
+    <button type="button" class="tab" role="tab" id="tabbtn-reports" data-tab="reports" aria-selected="false" aria-controls="tab-reports" data-i18n="nav.reports">Reports</button>
   </nav>
 
-  <section id="tab-employees" class="tab-panel active">
+  <!-- ===== Dashboard ===== -->
+  <section id="tab-dashboard" class="tab-panel active" role="tabpanel" aria-labelledby="tabbtn-dashboard">
+    <form id="dash-form" class="toolbar card" novalidate>
+      <label class="field"><span data-i18n="period.from">From</span><input name="from" type="date" required></label>
+      <label class="field"><span data-i18n="period.to">To</span><input name="to" type="date" required></label>
+      <div class="field actions"><button type="submit" class="primary" data-i18n="dash.refresh">Refresh</button></div>
+      <p class="hint" data-i18n="period.utcNote">Days are UTC calendar days.</p>
+    </form>
+    <div id="dash-status" class="status" role="status" aria-live="polite"></div>
+    <div class="metrics" id="metrics">
+      <div class="metric"><div class="metric-label" data-i18n="dash.totalEmployees">Employees</div><div class="metric-value" id="m-total">–</div></div>
+      <div class="metric"><div class="metric-label" data-i18n="dash.working">Working now</div><div class="metric-value" id="m-working">–</div></div>
+      <div class="metric"><div class="metric-label" data-i18n="dash.paused">On pause</div><div class="metric-value" id="m-paused">–</div></div>
+      <div class="metric"><div class="metric-label" data-i18n="dash.activeTasks">Active tasks</div><div class="metric-value" id="m-active-tasks">–</div></div>
+      <div class="metric"><div class="metric-label" data-i18n="dash.doneTasks">Completed tasks</div><div class="metric-value" id="m-done-tasks">–</div></div>
+      <div class="metric"><div class="metric-label" data-i18n="dash.tracked">Tracked time in period</div><div class="metric-value" id="m-tracked">–</div></div>
+    </div>
     <div class="card">
-      <h2>Add employee</h2>
+      <h2 data-i18n="dash.daily">Tracked time per day</h2>
+      <div id="chart" class="chart" role="img"></div>
+      <div id="daily-empty" class="status" hidden data-i18n="dash.emptyPeriod">No tracked time in this period.</div>
+      <div class="table-wrap"><table id="daily-table" class="stack" hidden>
+        <thead><tr><th data-i18n="col.date">Date</th><th data-i18n="col.duration">Duration</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h2 data-i18n="dash.byEmployee">Tracked time by employee</h2>
+      <div id="byemp-empty" class="status" hidden data-i18n="dash.emptyPeriod">No tracked time in this period.</div>
+      <div class="table-wrap"><table id="byemp-table" class="stack" hidden>
+        <thead><tr><th data-i18n="col.name">Name</th><th data-i18n="col.duration">Duration</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ===== Employees ===== -->
+  <section id="tab-employees" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-employees">
+    <div class="card">
+      <h2 data-i18n="emp.add">Add employee</h2>
       <form id="create-form" autocomplete="off">
-        <div class="row">
-          <label>Last name<input name="lastName" required maxlength="100"></label>
-          <label>First name<input name="firstName" required maxlength="100"></label>
-          <label>Middle name (optional)<input name="middleName" maxlength="100"></label>
+        <div class="grid">
+          <label class="field"><span data-i18n="form.lastName">Last name</span><input name="lastName" required maxlength="100"></label>
+          <label class="field"><span data-i18n="form.firstName">First name</span><input name="firstName" required maxlength="100"></label>
+          <label class="field"><span data-i18n="form.middleName">Middle name (optional)</span><input name="middleName" maxlength="100"></label>
+          <label class="field"><span data-i18n="form.email">Email</span><input name="email" type="email" required maxlength="320" data-i18n-ph="form.emailPh" placeholder="name@example.com"></label>
+          <label class="field wide"><span data-i18n="form.initialTask">Initial task or goal</span><input name="initialTask" required maxlength="500"></label>
         </div>
-        <div class="row">
-          <label>Email<input name="email" type="email" required maxlength="320"></label>
-          <label>Initial task or goal<input name="initialTask" required maxlength="500"></label>
-        </div>
+        <label class="check"><input type="checkbox" name="sendInvite" id="send-invite" checked><span data-i18n="form.sendInvite">Send an invitation email with the workspace link</span></label>
+        <div id="email-info" class="hint" hidden></div>
         <div class="row-wrap">
-          <button type="submit" class="primary"><?!= demoMode ? 'Create employee' : 'Create &amp; send invitation' ?></button>
+          <button type="submit" class="primary" data-i18n="form.create">Create employee</button>
         </div>
-        <div id="create-status" class="status"></div>
+        <div id="create-status" class="status" role="status" aria-live="polite"></div>
       </form>
     </div>
 
     <div class="card">
-      <h2>Employees</h2>
-      <div id="employees-loading" class="status">Loading…</div>
-      <div id="employees-empty" class="status" hidden>No employees yet. Add one above.</div>
-      <table id="employees-table" hidden>
+      <h2 data-i18n="emp.list">Employees</h2>
+      <div class="toolbar">
+        <label class="field grow"><span data-i18n="emp.search">Search by name or email</span><input id="emp-search" type="search" autocomplete="off" data-i18n-ph="emp.searchPh" placeholder="…"></label>
+        <label class="field"><span data-i18n="emp.filter">Work status</span>
+          <select id="emp-filter">
+            <option value="all" data-i18n="state.all">All</option>
+            <option value="working" data-i18n="state.working">Working</option>
+            <option value="paused" data-i18n="state.paused">On pause</option>
+            <option value="idle" data-i18n="state.idle">Not started</option>
+          </select>
+        </label>
+      </div>
+      <div id="emp-count" class="hint" role="status" aria-live="polite"></div>
+      <div id="employees-loading" class="status" data-i18n="common.loading">Loading…</div>
+      <div id="employees-empty" class="status" hidden>
+        <span data-i18n="emp.empty">No employees yet. Add one above.</span>
+        <button type="button" class="secondary" id="btn-sample" hidden data-i18n="emp.loadSample">Load fictional sample data</button>
+      </div>
+      <div id="employees-noresults" class="status" hidden data-i18n="emp.noResults">No employees match the search.</div>
+      <div class="table-wrap"><table id="employees-table" class="stack" hidden>
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Total time</th>
-            <th>Status</th>
-            <th></th>
+            <th data-i18n="col.name">Name</th>
+            <th data-i18n="col.email">Email</th>
+            <th data-i18n="col.status">Status</th>
+            <th data-i18n="col.total">Total time</th>
+            <th data-i18n="col.invite">Invitation</th>
+            <th><span class="sr-only" data-i18n="col.actions">Actions</span></th>
           </tr>
         </thead>
         <tbody></tbody>
-      </table>
+      </table></div>
     </div>
 
-    <div class="card" id="details-card" hidden>
-      <div class="row-wrap" style="justify-content: space-between;">
-        <h2 id="details-name" style="margin:0;">Details</h2>
-        <button type="button" class="secondary" id="details-close">Close</button>
+    <div class="card" id="details-card" hidden aria-live="polite">
+      <div class="row-between">
+        <h2 id="details-name" tabindex="-1" data-i18n="details.title">Details</h2>
+        <button type="button" class="secondary" id="details-close" data-i18n="common.close">Close</button>
       </div>
       <div id="details-content"></div>
     </div>
   </section>
 
-  <section id="tab-reports" class="tab-panel">
+  <!-- ===== Reports ===== -->
+  <section id="tab-reports" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-reports">
     <div class="card">
-      <h2>Report</h2>
-      <form id="report-form">
-        <div class="row">
-          <label>From<input name="from" type="date" required></label>
-          <label>To<input name="to" type="date" required></label>
-        </div>
-        <div class="row-wrap">
-          <button type="submit" class="primary">Generate report</button>
+      <h2 data-i18n="rep.title">Report</h2>
+      <form id="report-form" class="toolbar" novalidate>
+        <label class="field"><span data-i18n="period.from">From</span><input name="from" type="date" required></label>
+        <label class="field"><span data-i18n="period.to">To</span><input name="to" type="date" required></label>
+        <label class="field"><span data-i18n="rep.employee">Employee</span>
+          <select id="report-employee" name="employee"><option value="" data-i18n="rep.allEmployees">All employees</option></select>
+        </label>
+        <div class="field actions">
+          <button type="submit" class="primary" data-i18n="rep.generate">Generate report</button>
+          <button type="button" class="secondary" id="btn-csv" disabled data-i18n="rep.exportCsv">Export CSV</button>
         </div>
       </form>
-      <div class="notice">Date boundaries are interpreted in UTC (the Apps Script project's configured timezone). Change <code>timeZone</code> in <code>appsscript.json</code> if you need a different one.</div>
-      <div id="report-status" class="status"></div>
+      <p class="hint" data-i18n="period.utcNote">Days are UTC calendar days.</p>
+      <div id="report-status" class="status" role="status" aria-live="polite"></div>
+      <details id="csv-fallback" hidden>
+        <summary data-i18n="rep.csvFallback">CSV text (copy if the download did not start)</summary>
+        <textarea id="csv-text" readonly rows="6" aria-label="CSV"></textarea>
+      </details>
       <div id="report-content"></div>
     </div>
   </section>
 </main>
+<footer class="container footer"><span data-i18n="footer.note">Demonstration with fictional data. Times are shown in UTC.</span></footer>
 <script>window.WTT_DEMO = <?!= jsonForScript_(demoMode) ?>;</script>
+<script>window.WTT_DICT = <?!= jsonForScript_(I18N) ?>;
+window.WTT_RESOLVE_LANG = <?!= resolveLanguage.toString() ?>;
+window.WTT_FILTER = <?!= filterEmployees.toString() ?>;</script>
+<?!= include_('i18n_js'); ?>
 <?!= include_('manager_js'); ?>
 </body>
 </html>

@@ -45,10 +45,11 @@ const publicNames = Object.keys(fns).filter(n => !n.endsWith('_'));
 const API = [
   'api_listEmployees', 'api_createEmployee', 'api_loadDemoSample', 'api_getEmployeeDetails',
   'api_assignTask', 'api_rotateWorkspaceToken', 'api_generateReport', 'api_getEmployeeState',
-  'api_startSession', 'api_pauseSession', 'api_resumeSession', 'api_finishTask'
+  'api_startSession', 'api_pauseSession', 'api_resumeSession', 'api_finishTask',
+  'api_resendInvitation', 'api_getAppInfo', 'api_getDashboard', 'api_exportReportCsv'
 ];
-const OWNER_ONLY = ['runTests', 'resetDemoData', 'enableOpenAccess', 'disableOpenAccess'];
-const PURE = Object.keys(fns).filter(n => fns[n].file === 'pure.gs' && !n.endsWith('_'));
+const OWNER_ONLY = ['runTests', 'resetDemoData', 'cleanupTestArtifacts', 'enableOpenAccess', 'disableOpenAccess'];
+const PURE = Object.keys(fns).filter(n => (fns[n].file === 'pure.gs' || fns[n].file === 'i18n.gs') && !n.endsWith('_'));
 
 test('surface: every .gs file parses', () => {
   gsFiles.forEach(f => new vm.Script(read(f), { filename: f }));
@@ -60,7 +61,7 @@ test('surface: public functions are exactly doGet + api_* + owner-only + pure he
 });
 
 test('surface: pure.gs performs no service calls (so its public helpers are inert)', () => {
-  const pure = read('pure.gs');
+  const pure = read('pure.gs') + '\n' + read('i18n.gs');
   const forbidden = /\b(SpreadsheetApp|PropertiesService|MailApp|GmailApp|DriveApp|UrlFetchApp|ScriptApp|LockService|CacheService|HtmlService|Session)\b\s*\./;
   assert(!forbidden.test(pure.replace(/\/\/.*$/gm, '')), 'pure.gs must not call Apps Script services');
 });
@@ -109,7 +110,7 @@ test('surface: no public function lets a caller set the spreadsheet id or a Scri
   const allowedWriters = {
     'Code.gs': ['enableOpenAccess', 'disableOpenAccess'],
     'Config.gs': ['getSpreadsheet_'],
-    'Tests.gs': ['test_adminFunctionsRefuseWhenNotArmed_', 'test_adminArmingIsConsumedOnUse_']
+    'Tests.gs': ['test_adminFunctionsRefuseWhenNotArmed_', 'test_adminArmingIsConsumedOnUse_', 'test_emailKillSwitchStopsAllSending_']
   };
   Object.keys(fns).forEach(n => {
     if (!/setProperty\(|setProperties\(/.test(fns[n].body.replace(/\/\/.*$/gm, ''))) return;
@@ -147,20 +148,52 @@ test('surface: spreadsheet ids and URLs are only read where intended', () => {
   });
 });
 
-test('surface: the only MailApp call is in email_sendInvitation_, behind the demo hard stop', () => {
+test('surface: MailApp is only touched in Email.gs, sendEmail only inside email_deliver_', () => {
   const hits = [];
   gsFiles.forEach(f => {
-    read(f).split('\n').forEach((l, i) => { if (/MailApp|GmailApp/.test(l) && !l.trim().startsWith('//')) hits.push(f + ':' + (i + 1)); });
+    read(f).split('\n').forEach((l, i) => { if (/MailApp|GmailApp/.test(l) && !l.trim().startsWith('//')) hits.push(f + ':' + (i + 1) + ' ' + l.trim()); });
   });
-  assertEq(hits.length, 1);
-  assert(/^Email\.gs/.test(hits[0]), 'MailApp only in Email.gs');
-  const body = fns.email_sendInvitation_.body;
-  assert(body.indexOf('DEMO_CONFIG.ENABLED') < body.indexOf('MailApp.sendEmail'), 'demo guard precedes MailApp.sendEmail');
+  hits.forEach(h => assert(/^Email\.gs/.test(h), 'MailApp outside Email.gs: ' + h));
+  assert(!hits.some(h => /GmailApp/.test(h)), 'GmailApp (mailbox access) is never used');
+  const send = hits.filter(h => /sendEmail/.test(h));
+  assertEq(send.length, 1, 'exactly one sendEmail call');
+  assert(/MailApp\.sendEmail\(msg\)/.test(fns.email_deliver_.body), 'sendEmail lives in email_deliver_');
+  const quota = hits.filter(h => /getRemainingDailyQuota/.test(h));
+  assertEq(quota.length, 1);
 });
 
-test('surface: api_createEmployee never mails in demo mode', () => {
+test('surface: every send passes the kill switch, the reserved-domain rule, the capability probe and the caps first', () => {
+  const body = fns.email_sendInvitation_.body;
+  const order = ['email_enabled_()', 'isReservedTestEmail(', 'email_capability_()', 'DAILY_LIMIT', 'PER_RECIPIENT_DAILY', 'email_deliver_('].map(k => body.indexOf(k));
+  order.forEach((i, n) => assert(i >= 0, 'missing step ' + n));
+  for (let i = 1; i < order.length; i++) assert(order[i] > order[i - 1], 'step ' + i + ' out of order');
+  assert(/LockService\.getScriptLock\(\)/.test(body), 'cap check and reservation run under the script lock');
+  assert(/function email_deliver_[\s\S]*mailSender_/.test(read('Email.gs')), 'test double hook exists');
+  gsFiles.filter(f => f !== 'Tests.gs').forEach(f => assert(!/mailSender_\s*=/.test(read(f).replace(/var mailSender_ = null;/, '')), f + ' must not assign mailSender_'));
+});
+
+test('surface: the employee exists before any invitation is attempted, and a failed invitation cannot undo it', () => {
   const body = fns.api_createEmployee.body;
-  assert(/emailSkipped = DEMO_CONFIG\.ENABLED/.test(body) && /if \(!emailSkipped\)/.test(body), 'mail is conditional on !emailSkipped');
+  assert(body.indexOf('employees_create_(') >= 0 && body.indexOf('employees_create_(') < body.indexOf('email_sendInvitation_('), 'create precedes invite');
+  assert(/catch \(err\)/.test(body.slice(body.indexOf('email_sendInvitation_('))), 'invite errors are caught');
+  assert(!/deleteRow_|deleteRowsWhere_/.test(body), 'no rollback of the employee on invitation failure');
+});
+
+test('surface: invitation log never receives the token or the plain address', () => {
+  const body = fns.email_sendInvitation_.body + fns.invites_log_.body;
+  assert(!/workspaceToken/.test(fns.invites_log_.body), 'log writer does not touch the token');
+  assert(/shortHash\(email\)/.test(fns.invites_log_.body), 'recipient is hashed');
+  assert(/email_safeDetail_\(err\)/.test(fns.email_sendInvitation_.body), 'error text is sanitized before it is stored');
+  assert(body.length > 0);
+});
+
+test('surface: client code never builds HTML from data', () => {
+  ['manager_js.html', 'employee_js.html', 'i18n_js.html'].forEach(f => {
+    const src = fs.readFileSync(path.join(srcDir, f), 'utf8');
+    assert(!/insertAdjacentHTML|document\.write|outerHTML\s*=|\beval\(|new Function\(/.test(src), f + ' uses an HTML/code sink');
+    const sinks = src.match(/\.innerHTML\s*=[^;]*/g) || [];
+    assertEq(sinks.length, 0, f + ' assigns innerHTML: ' + sinks.join(' | '));
+  });
 });
 
 test('surface: client code only calls api_* functions', () => {
@@ -173,10 +206,11 @@ test('surface: client code only calls api_* functions', () => {
   called.forEach(n => assert(API.indexOf(n) >= 0, 'client calls unknown server function ' + n));
 });
 
-test('manifest: no mail or unrelated OAuth scopes, nothing broader than needed', () => {
+test('manifest: only spreadsheets, scriptapp and the send-only mail scope (no Gmail, Drive or others)', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'appsscript.json'), 'utf8'));
   assertEq(manifest.oauthScopes.slice().sort(), [
     'https://www.googleapis.com/auth/script.scriptapp',
+    'https://www.googleapis.com/auth/script.send_mail',
     'https://www.googleapis.com/auth/spreadsheets'
   ]);
   assertEq(manifest.webapp.executeAs, 'USER_DEPLOYING');
@@ -185,7 +219,8 @@ test('manifest: no mail or unrelated OAuth scopes, nothing broader than needed',
 test('config: demo build is enabled with finite row caps', () => {
   const cfg = read('Config.gs');
   assert(/ENABLED:\s*true/.test(cfg), 'DEMO_CONFIG.ENABLED is true');
-  ['EMPLOYEES', 'TASKS', 'SESSIONS'].forEach(k => assert(new RegExp(k + ':\\s*[1-9]\\d*').test(cfg.slice(cfg.indexOf('LIMITS'))), 'cap for ' + k));
+  ['EMPLOYEES', 'TASKS', 'SESSIONS', 'INVITES'].forEach(k => assert(new RegExp(k + ':\\s*[1-9]\\d*').test(cfg.slice(cfg.indexOf('LIMITS'))), 'cap for ' + k));
+  assert(/DAILY_LIMIT:\s*[1-9]\d*/.test(cfg) && /PER_RECIPIENT_DAILY:\s*[1-9]\d*/.test(cfg), 'finite email caps');
 });
 
 let passed = 0;

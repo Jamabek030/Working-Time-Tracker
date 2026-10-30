@@ -113,9 +113,9 @@ function safeApi_(label, fn) {
       try { Logger.log(label + ' failed: ' + msg); } catch (__) {}
     }
     if (err && err.userSafe) {
-      throw new Error(msg);
+      throw new Error(errorEncode(msg));
     }
-    throw new Error('A server error occurred. Check the Apps Script execution log.');
+    throw new Error(errorEncode('A server error occurred. Check the Apps Script execution log.'));
   }
 }
 
@@ -161,11 +161,12 @@ function getWebAppUrl_() {
   }
 }
 
-function employeeWorkspaceUrl_(token) {
+function employeeWorkspaceUrl_(token, lang) {
   var baseUrl = getWebAppUrl_();
   if (!baseUrl) return '';
   return baseUrl + (baseUrl.indexOf('?') < 0 ? '?' : '&') +
-    'page=employee&token=' + encodeURIComponent(token);
+    'page=employee&token=' + encodeURIComponent(token) +
+    (lang ? '&lang=' + encodeURIComponent(normalizeLang(lang)) : '');
 }
 
 // -------- Manager API --------
@@ -183,12 +184,17 @@ function api_listEmployees() {
       (byEmp[s.employeeId] = byEmp[s.employeeId] || []).push(s);
     });
     var nowMs = Date.now();
+    var tasksByEmp = {};
+    tasks_list_().forEach(function (t) { (tasksByEmp[t.employeeId] = tasksByEmp[t.employeeId] || []).push(t); });
+    var invites = invites_latestByEmployee_();
     // The workspace token is deliberately NOT returned here (audit F-04).
     // Use api_getEmployeeDetails to fetch it on demand.
     return employees.map(function (e) {
       var sessions = byEmp[e.id] || [];
       var hasActive = sessions.some(function (s) { return s.status === 'active'; });
       return {
+        workState: classifyWorkState(tasksByEmp[e.id] || [], sessions),
+        invite: invites[e.id] || null,
         id: e.id,
         lastName: e.lastName,
         firstName: e.firstName,
@@ -209,18 +215,23 @@ function api_createEmployee(data) {
     setupSheets_();
     var employee = employees_create_(data);
     var initialTask = sanitize(data && data.initialTask);
-    var emailResult = { sent: false, error: '' };
-    var emailSkipped = DEMO_CONFIG.ENABLED;
-    try {
-      if (!emailSkipped) {
-        email_sendInvitation_(employee, initialTask);
-        emailResult.sent = true;
+    var lang = normalizeLang(data && data.lang);
+    // The employee is already saved. Whatever happens to the email, the record
+    // stays and the manager can copy the workspace link or retry.
+    var invite;
+    if (data && data.sendInvite === false) {
+      invite = { status: 'not_requested', at: nowIso_() };
+      try { invites_log_(getContext_(), employee.id, employee.email, 'not_requested', ''); } catch (_) {}
+    } else {
+      try {
+        invite = email_sendInvitation_(employee, initialTask, lang);
+      } catch (err) {
+        try { console.error('invitation step failed: ' + email_safeDetail_(err)); } catch (_) {}
+        invite = { status: 'failed', at: nowIso_() };
       }
-    } catch (err) {
-      emailResult.error = err && err.message ? err.message : String(err);
-      try { console.error('invitation email failed: ' + emailResult.error); } catch (_) {}
     }
     return {
+      invite: invite,
       employee: {
         id: employee.id,
         lastName: employee.lastName,
@@ -228,11 +239,47 @@ function api_createEmployee(data) {
         middleName: employee.middleName,
         email: employee.email,
         createdAt: employee.createdAt
-      },
-      emailSent: emailResult.sent,
-      emailSkipped: emailSkipped,
-      emailError: (emailResult.sent || emailSkipped) ? '' : emailResult.error
+      }
     };
+  });
+}
+
+// Retry / resend an invitation for an existing employee.
+function api_resendInvitation(employeeId, lang) {
+  return safeApi_('api_resendInvitation', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var employee = employees_findById_(employeeId);
+    if (!employee) throw UserError('Employee not found.');
+    var task = tasks_getActive_(employee.id);
+    return email_sendInvitation_(employee, task ? task.title : '', normalizeLang(lang));
+  });
+}
+
+// What the Manager UI needs to know about this deployment's capabilities.
+function api_getAppInfo() {
+  return safeApi_('api_getAppInfo', function () {
+    requireOpenAccess_();
+    var cap = email_capability_();
+    return { demo: !!DEMO_CONFIG.ENABLED, email: { enabled: cap.enabled, available: cap.available, remaining: cap.remaining } };
+  });
+}
+
+function api_getDashboard(fromDate, toDate) {
+  return safeApi_('api_getDashboard', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    return dashboard_get_(fromDate, toDate);
+  });
+}
+
+// Returns the CSV text of the selected report (same logic as the on-screen
+// report). The browser turns it into a file.
+function api_exportReportCsv(fromDate, toDate, employeeId, lang) {
+  return safeApi_('api_exportReportCsv', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    return reports_csv_(fromDate, toDate, employeeId, lang);
   });
 }
 
@@ -262,6 +309,7 @@ function api_getEmployeeDetails(employeeId) {
     for (var j = 0; j < sessions.length; j++) if (sessions[j].status === 'active') { activeSession = sessions[j]; break; }
     var diag = sumSessionMsWithDiagnostics(sessions, Date.now());
     return {
+      invite: invites_latestByEmployee_()[employee.id] || null,
       employee: {
         id: employee.id,
         lastName: employee.lastName,

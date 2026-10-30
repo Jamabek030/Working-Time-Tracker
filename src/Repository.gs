@@ -79,3 +79,24 @@ function deleteRow_(sheetName, idField, idValue, headers) {
   }
   return false;
 }
+
+// Deletes every data row for which predicate(rowObject) is true, bottom-up so
+// row numbers stay valid. Returns the number of rows removed. Only the
+// owner-armed cleanup in Demo.gs uses it.
+function deleteRowsWhere_(sheetName, predicate) {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return 0;
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return 0;
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  var removed = 0;
+  for (var i = values.length - 1; i >= 0; i--) {
+    var obj = {};
+    headers.forEach(function (h, c) { obj[h] = values[i][c]; });
+    if (predicate(obj)) { sheet.deleteRow(i + 2); removed++; }
+  }
+  return removed;
+}

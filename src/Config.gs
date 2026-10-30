@@ -5,24 +5,31 @@ var DEFAULT_CONFIG = {
   SHEETS: {
     EMPLOYEES: 'Employees',
     TASKS: 'Tasks',
-    SESSIONS: 'WorkSessions'
+    SESSIONS: 'WorkSessions',
+    INVITES: 'Invitations'
   },
   HEADERS: {
     EMPLOYEES: ['id', 'lastName', 'firstName', 'middleName', 'email', 'workspaceToken', 'createdAt', 'active'],
     TASKS: ['id', 'employeeId', 'title', 'status', 'createdAt', 'completedAt'],
-    SESSIONS: ['id', 'employeeId', 'taskId', 'startTime', 'endTime', 'durationMs', 'status']
+    SESSIONS: ['id', 'employeeId', 'taskId', 'startTime', 'endTime', 'durationMs', 'status'],
+    INVITES: ['id', 'employeeId', 'emailHash', 'at', 'status', 'detail']
   }
 };
 
 // Public-demonstration switch. When ENABLED the app (a) only serves while the
 // bound spreadsheet's title contains the word "test" or "demo" (fails closed
-// on any other workbook), (b) never sends email, (c) caps how many rows an
-// anonymous audience can write. See Demo.gs and the README "Public demonstration"
+// on any other workbook), (b) sends invitation email only within the EMAIL
+// limits below (reserved example addresses are never mailed), (c) caps how
+// many rows an anonymous audience can write. See Demo.gs and the README "Public demonstration"
 // section. Set ENABLED to false for a non-demo deployment (which then falls
 // back to the ACCESS_MODE gate).
 var DEMO_CONFIG = {
   ENABLED: true,
-  LIMITS: { EMPLOYEES: 100, TASKS: 500, SESSIONS: 3000 }
+  LIMITS: { EMPLOYEES: 100, TASKS: 500, SESSIONS: 3000, INVITES: 1000 },
+  // Invitation email. Because anonymous visitors can type any address, sending
+  // is capped globally and per recipient per UTC day. ENABLED=false (or Script
+  // Property EMAIL_DISABLED=true) turns sending off entirely.
+  EMAIL: { ENABLED: true, DAILY_LIMIT: 20, PER_RECIPIENT_DAILY: 2 }
 };
 
 function getContext_(overrides) {
@@ -30,7 +37,8 @@ function getContext_(overrides) {
     sheets: {
       EMPLOYEES: DEFAULT_CONFIG.SHEETS.EMPLOYEES,
       TASKS: DEFAULT_CONFIG.SHEETS.TASKS,
-      SESSIONS: DEFAULT_CONFIG.SHEETS.SESSIONS
+      SESSIONS: DEFAULT_CONFIG.SHEETS.SESSIONS,
+      INVITES: DEFAULT_CONFIG.SHEETS.INVITES
     },
     headers: DEFAULT_CONFIG.HEADERS
   };

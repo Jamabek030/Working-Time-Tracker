@@ -48,7 +48,7 @@ function demo_environmentOk_() {
 // three application sheets are capped; Test_* sheets used by runTests are not.
 function demo_checkRowCap_(sheetName, sheet) {
   if (!DEMO_CONFIG.ENABLED) return;
-  var keys = ['EMPLOYEES', 'TASKS', 'SESSIONS'];
+  var keys = ['EMPLOYEES', 'TASKS', 'SESSIONS', 'INVITES'];
   for (var i = 0; i < keys.length; i++) {
     if (DEFAULT_CONFIG.SHEETS[keys[i]] === sheetName) {
       checkRowLimit(Math.max(0, sheet.getLastRow() - 1), DEMO_CONFIG.LIMITS[keys[i]], sheetName);
@@ -91,7 +91,8 @@ function demo_reset_(ctx) {
   lock.waitLock(10000);
   try {
     var ss = getSpreadsheet_();
-    [ctx.sheets.EMPLOYEES, ctx.sheets.TASKS, ctx.sheets.SESSIONS].forEach(function (name) {
+    [ctx.sheets.EMPLOYEES, ctx.sheets.TASKS, ctx.sheets.SESSIONS, ctx.sheets.INVITES].forEach(function (name) {
+      if (!name) return;
       var sheet = ss.getSheetByName(name);
       if (!sheet) return;
       var lastRow = sheet.getLastRow();
@@ -117,4 +118,38 @@ function resetDemoData() {
   Logger.log('resetDemoData: restored ' + counts.employees + ' employees, ' + counts.tasks +
     ' tasks, ' + counts.sessions + ' sessions.');
   return counts;
+}
+
+// Removes ONLY the fictional records created by this project's own acceptance
+// runs (see isTestArtifactEmail in pure.gs: demo.verifier.<digits>@example.com
+// and inj.verifier@example.com) together with their tasks, sessions and
+// invitation log rows. Any other employee is left untouched.
+function demo_cleanup_(ctx) {
+  ctx = ctx || getContext_();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var ids = {};
+    employees_list_(ctx).forEach(function (e) { if (isTestArtifactEmail(e.email)) ids[e.id] = true; });
+    var removed = { employees: 0, tasks: 0, sessions: 0, invites: 0 };
+    if (!Object.keys(ids).length) return removed;
+    removed.sessions = deleteRowsWhere_(ctx.sheets.SESSIONS, function (r) { return ids[String(r.employeeId)] === true; });
+    removed.tasks = deleteRowsWhere_(ctx.sheets.TASKS, function (r) { return ids[String(r.employeeId)] === true; });
+    if (ctx.sheets.INVITES) removed.invites = deleteRowsWhere_(ctx.sheets.INVITES, function (r) { return ids[String(r.employeeId)] === true; });
+    removed.employees = deleteRowsWhere_(ctx.sheets.EMPLOYEES, function (r) { return ids[String(r.id)] === true; });
+    return removed;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// OWNER-ONLY. Arm with ADMIN_MODE=cleanupTestArtifacts, then run from the editor.
+function cleanupTestArtifacts() {
+  adminOnly_('cleanupTestArtifacts');
+  if (!DEMO_CONFIG.ENABLED || !demo_environmentOk_()) {
+    throw new Error('Refusing to clean up: this is not a verified demonstration spreadsheet.');
+  }
+  var removed = demo_cleanup_(getContext_());
+  Logger.log('cleanupTestArtifacts: removed ' + JSON.stringify(removed));
+  return removed;
 }

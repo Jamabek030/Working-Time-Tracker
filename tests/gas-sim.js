@@ -88,7 +88,17 @@ function createEnv(opts) {
     console: { error() {}, log() {} },
     Logger: { log: m => log.logger.push(String(m)) },
     Utilities: { getUuid: () => crypto.randomUUID() },
-    MailApp: { sendEmail: m => { log.mail.push(m); } },
+    MailApp: {
+      // The simulated mail service only records messages; nothing is ever sent.
+      sendEmail: m => {
+        if (opts.mailFails) throw new Error('Service invoked too many times for one day: email.');
+        log.mail.push(m);
+      },
+      getRemainingDailyQuota: () => {
+        if (opts.noMailScope) throw new Error('You do not have permission to call MailApp.getRemainingDailyQuota. Required permissions: https://www.googleapis.com/auth/script.send_mail');
+        return 100 - log.mail.length;
+      }
+    },
     ScriptApp: { getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/SIM/exec' }) },
     SpreadsheetApp: {
       openById: id => { log.opened.push(id); if (id === ss.id) return ss; if (id === other.id) return other; throw new Error('No item with the given ID could be found.'); },
