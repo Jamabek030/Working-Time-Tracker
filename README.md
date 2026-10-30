@@ -65,32 +65,49 @@ an employee's Details)
 
 ### Public URL
 
-**Not deployed / not verified yet.** No public web-app deployment exists at
-the time of writing: creating it was blocked in the session that prepared
-this code, so the URL is intentionally left blank rather than invented.
+> **Public Manager URL (deployment `AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA`, version 1):**
+>
+> https://script.google.com/macros/s/AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA/exec
 
-> Public demonstration URL: _pending — to be filled in only after the
-> deployment steps below were run and the Scenario A–G checks were executed
-> against it._
+It opens the Manager directly with no Google sign-in. Google shows its
+standard banner "This application was created by another user, not by
+Google" at the top of every Apps Script web app; that is not under the app's
+control. Everyone who opens the URL shares **one** dataset.
 
-### Remaining steps to publish (owner only)
+Verified on 2026-10-30 with a fresh, signed-out Chrome profile driven over the
+DevTools protocol (`tests/live/accept.js`, see [Live verification](#live-verification-of-the-deployed-url)).
 
-1. Open the Apps Script editor of the test project (the one `clasp` created;
-   its id is in `.clasp.json`, which is gitignored).
-2. **Arm and run the integration tests** (re-authorizes the trimmed scope
-   set, and proves the new guards in the real runtime):
-   Project Settings → *Script properties* → add `ADMIN_MODE` = `runTests`
-   (the value is the name of the one function being armed), then
-   select `runTests` and Run. Expected: `28/28 passed` in the log.
-3. **Reset to the known initial state:** add `ADMIN_MODE` = `resetDemoData`, then
-   run `resetDemoData`.
-4. Deploy → New deployment → *Web app* → Execute as **Me**, Who has access
-   **Anyone** (this is what `appsscript.json` already declares). Copy the
-   `/exec` URL.
-5. Run the verification checklist below in a private/incognito window and
-   only then record the URL above.
+### How the employee workflow works in the demo
 
-Do **not** run `enableOpenAccess()`: the demo build does not use it.
+Email is disabled, so no invitation is sent. Instead:
+
+1. In the Manager, add an employee (fictional name, `@example.com` email,
+   initial task) — **Employees → Add employee**.
+2. Click **Details** on the new row. The **Workspace link** is shown and can
+   be copied (**Copy workspace link**) or opened.
+3. Open that link: the employee workspace shows the task and **Start / Pause
+   / Resume / Finish**, the elapsed timer and the history.
+4. Back in the Manager, **Details** shows tasks and sessions, and **Reports**
+   totals them for a date range.
+
+The link is a bearer token: whoever holds it can use that workspace, and it
+says nothing about who the person really is. In a production setup the same
+link would be emailed (see Known limitations), and **Rotate workspace token**
+revokes a leaked link.
+
+### Redeploying / updating the demo safely
+
+```bash
+npm test                                    # all local suites must pass
+bash ./scripts/setup-apps-script.sh         # pushes src/ to the dedicated test project
+clasp create-deployment --description "..." # new immutable version + new /exec URL
+# or, to keep the same URL: clasp update-deployment <deploymentId> (see `clasp redeploy --help`)
+SHEET_ID=<demo sheet id> node tests/live/accept.js <exec url>   # live acceptance run
+```
+
+Never point `.clasp.json` or `SPREADSHEET_ID` at any other spreadsheet. To
+restore the known initial data run `resetDemoData` (below). Do **not** run
+`enableOpenAccess()`: the demo build does not use it.
 
 ### What the demonstration environment is
 
@@ -169,19 +186,41 @@ under [Known limitations](#known-limitations). If those limits are
 unacceptable, the escape hatch is a hosted app + managed database; that
 would be a separate, documented migration.
 
-### Verification checklist for the deployed URL
+### Live verification of the deployed URL
 
-Status of each scenario **in this repository's history**:
+`tests/live/accept.js` drives a fresh, signed-out headless Chrome profile over
+the DevTools protocol (no extension, no cookies, no Google session) against the
+deployed `/exec` URL and prints PASS/FAIL per check. Final run on 2026-10-30:
+**29/30 checks passed**; the one failure (F8) was only because that check uses
+a fixed email that an earlier run of the same script had already created
+("An employee with this email already exists"). F8 passed on the previous run
+(27/30 then, with the other three failures being wrong expectations in the
+script that were corrected, not app defects).
 
-| Scenario | Status |
+| Scenario | Result |
 | --- | --- |
-| A Public access (incognito, no sign-in, Manager opens) | **Not executed** — no deployment yet |
-| B Employee creation + initial task | Covered by `test_createEmployeeAndLink_` (integration, not re-run after the changes); live check **not executed** |
-| C Timer lifecycle, duplicate-timer rejection | Covered by `test_startPauseResume_`, `test_noDuplicateActiveTimer_`; live check **not executed** |
-| D Persistence across refresh/reopen | Covered by `test_reloadRestoresState_`; live check **not executed** |
-| E History, task change, date-range reports, empty report | Covered by `test_changeTaskPreservesHistory_`, `test_reportFiltersByRange_`, `test_emptyReport_`, `test_demoSampleReportsMatchSessions_`, `test_demoSampleKeepsTaskHistory_`; live check **not executed** |
-| F Public security (no secrets, no email, admin functions refuse, internals not callable) | Static part **verified** (`tests/surface.test.js`, 17/17). Live part (call `employees_list`, `resetDemoData`, … from the browser console of the deployed page) **not executed** |
-| G Documentation matches implementation | Reviewed against the code; fresh-session URL check **not executed** |
+| A Manager opens at the URL with no Google sign-in (final page is the app, not `accounts.google.com`); demo banner shown | **PASS** (A1, A2) |
+| B Create a fictional employee, it appears in the list, initial task shown in Details, copyable employee workspace link present, second task assigned and first kept as `replaced` history | **PASS** (B1–B5) |
+| C Employee workspace opens anonymously; Start; elapsed time increases; Pause stops it (identical readings 3.5 s apart); Resume adds a new session row; a second start is rejected ("A session is already running."); Finish ends the task | **PASS** (C1–C9) |
+| D Refresh while a timer runs restores the running timer (7 s → 14–17 s, not reset); reopening the URL keeps the employee | **PASS** (D1, D2) |
+| E Manager Details list both tasks and the paused + completed sessions; report totals the sessions; an empty range (2000-01-01..02) shows "No activity in the selected period." | **PASS** (E1–E3) |
+| F1 20 internal functions (`employees_list_`, `email_sendInvitation_`, `setupSheets_`, `getSpreadsheet_`, `setSpreadsheetId`, …) are **not exposed** by `google.script.run` to the client | **PASS** |
+| F2 `runTests`, `resetDemoData`, `enableOpenAccess`, `disableOpenAccess` called anonymously are refused ("not armed") | **PASS** |
+| F3 spreadsheet id appears in no page, frame or API response | **PASS** |
+| F4 employee list carries no workspace token; F5 odd identifiers refused with a plain message; F6/F7 an employee id used as a token is refused ("Invalid workspace link") for state and for starting a timer | **PASS** |
+| F8 formula-looking input (`=HYPERLINK(...)`) stored as text and returned unchanged | **PASS** on the earlier run; the final run could not repeat it (duplicate email, see above) |
+| F9 over-long name shows "Last name is too long (max 100 characters)." | **PASS** |
+| Email | No invitation is sent: the UI reports "Demo mode: no email is sent", the code path is guarded, and the `send_mail` scope is not in the manifest. **No mail delivery was ever attempted or tested.** |
+
+**Not verified:** behaviour in Safari/Firefox or on a physical phone; behaviour
+under concurrent anonymous load or quota exhaustion; the Google "created by
+another user" banner in other locales; that an unauthenticated raw HTTP client
+(not using the page's `google.script.run`) is refused for private functions
+(this relies on Google's documented behaviour that names ending in `_` are
+private). Test artifacts left in the shared demo data: several fictional
+`Verifier Demo Q` employees (`demo.verifier.<timestamp>@example.com`) and one
+`inj.verifier@example.com` formula-text employee. They are harmless and are
+removed by `resetDemoData` (owner-armed).
 
 ## Architecture and data flow
 
@@ -307,11 +346,10 @@ is consumed on use; validation messages are user-safe.
 | Node `tests/pure.test.js` | **55/55 passed** | this repository, locally |
 | Node `tests/surface.test.js` | **17/17 passed** | this repository, locally |
 | Node `tests/gas-sim.test.js` — the real `src/*.gs` (including all 28 `runTests` tests) run against an in-memory **simulation** of Sheets/Properties/Lock | **22/22 passed**; the simulated `runTests` reported 28/28 | this repository, locally. **A simulation, not Apps Script**: no real quotas, lock contention, Sheets coercion or `google.script.run` rules |
-| Apps Script integration, original 20 tests | **20/20 passed** — reported by the project owner (baseline before these changes); not executed by the AI | owner's Apps Script editor |
-| Apps Script integration, current 28 tests | **Not executed.** The AI cannot run Apps Script services; the owner must arm `ADMIN_MODE` and run `runTests`. | — |
+| Apps Script integration `runTests`, current 28 tests | **28/28 passed** — reported by the project owner after running it in the real editor (armed with `ADMIN_MODE=runTests`). **Not executed by the AI**; the log was not shown to the AI. | owner's Apps Script editor |
+| Live acceptance `tests/live/accept.js` against the deployed `/exec` URL (signed-out headless Chrome) | **29/30 checks passed** (see above) | this machine, against the real deployment |
 
-The 20/20 baseline predates the function renaming (F-19) and must be
-re-run; it is not evidence that the current code works in Apps Script.
+Earlier 20/20 and the simulation are not substitutes for the real run; the real run is the 28/28 line.
 
 ## Known limitations
 
@@ -412,7 +450,7 @@ Evidence = an actual test or an observed command result.
    user-safe`) and the integration test
    `test_validationMessagesAreUserSafe_`.
 
-No defect is claimed from the live deployment because none has been run yet.
+The live acceptance run against the deployment found no application defect. Three of its checks first failed because of wrong expectations in the script itself (error text carries an `Error:` prefix; the browser rejects a function-valued argument before it reaches the server); those expectations were corrected, not the app.
 
 ## Files
 
@@ -441,5 +479,7 @@ tests/
   gas-sim.js            In-memory simulation of the Apps Script services used
   gas-sim.test.js       Runs the real .gs files (incl. runTests) against the simulation (22 cases)
   load-pure.js, run.js  Loader and entry point
+  live/cdp.js           Dependency-free DevTools-protocol driver (fresh signed-out Chrome)
+  live/accept.js        Live acceptance run against a deployed /exec URL (needs SHEET_ID env + the URL)
 package.json            `npm test`
 ```
