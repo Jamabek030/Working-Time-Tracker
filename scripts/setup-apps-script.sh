@@ -65,20 +65,16 @@ echo "==> clasp: $(clasp --version 2>&1 | head -1)"
 
 # clasp exits non-zero when not logged in. Capture status without aborting.
 set +e
-login_status="$(clasp login --status 2>&1)"
+login_status="$(clasp show-authorized-user 2>&1)"
 login_rc=$?
 set -e
-if [ $login_rc -ne 0 ] || ! printf '%s' "$login_status" | grep -qiE 'logged in|you are'; then
+if [ $login_rc -ne 0 ] || ! printf '%s' "$login_status" | grep -qiE 'logged in as'; then
   echo "ERROR: clasp is not authenticated." >&2
   echo "       Run:  clasp login" >&2
   echo "       (On a headless machine: clasp login --no-localhost)" >&2
   exit 1
 fi
 echo "==> clasp login OK"
-
-# Stage the manifest inside rootDir=src/ so clasp picks it up.
-cp -f appsscript.json src/appsscript.json
-echo "==> Staged src/appsscript.json from repo root (gitignored copy)"
 
 if [ -f .clasp.json ]; then
   echo "==> Found existing .clasp.json — pushing to the configured project."
@@ -91,6 +87,11 @@ else
   echo "==> Creating container-bound script \"$TITLE\" on sheet $SHEET_ID"
   clasp create --title "$TITLE" --parentId "$SHEET_ID" --rootDir src
 fi
+
+# Stage the manifest inside rootDir=src/ so clasp picks it up. This must come
+# AFTER `clasp create`, which overwrites src/appsscript.json with the default.
+cp -f appsscript.json src/appsscript.json
+echo "==> Staged src/appsscript.json from repo root (gitignored copy)"
 
 echo "==> Pushing src/ to Apps Script..."
 clasp push -f
