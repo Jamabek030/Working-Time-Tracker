@@ -3,13 +3,17 @@
 <head>
 <base target="_top">
 <meta charset="utf-8">
-<?!= include('styles'); ?>
+<?!= include_('styles'); ?>
 </head>
 <body>
 <header>
   <div class="container">
     <h1>Working Time Tracker — Manager</h1>
+    <? if (demoMode) { ?>
+    <div class="banner"><strong>Public demonstration.</strong> Use fictional data only &mdash; anyone with this URL can see and change everything here, and the data may be reset at any time. No email is ever sent. To run a timer, open an employee's <em>Details</em> and use the workspace link.</div>
+    <? } else { ?>
     <div class="notice">Shared manager console. This page is not protected by authentication; anyone with the URL can use it. Share it only with managers. Workspace links for individual employees are shown only in Details.</div>
+    <? } ?>
   </div>
 </header>
 <main class="container">
@@ -32,7 +36,7 @@
           <label>Initial task or goal<input name="initialTask" required maxlength="500"></label>
         </div>
         <div class="row-wrap">
-          <button type="submit" class="primary">Create &amp; send invitation</button>
+          <button type="submit" class="primary"><?!= demoMode ? 'Create employee' : 'Create &amp; send invitation' ?></button>
         </div>
         <div id="create-status" class="status"></div>
       </form>
@@ -83,6 +87,7 @@
     </div>
   </section>
 </main>
-<?!= include('manager_js'); ?>
+<script>window.WTT_DEMO = <?!= jsonForScript_(demoMode) ?>;</script>
+<?!= include_('manager_js'); ?>
 </body>
 </html>

@@ -4,554 +4,442 @@ A small, functional web application for tracking employees' working time.
 Backend: Google Apps Script. Persistence: Google Sheets. Frontend: plain
 HTML, CSS, and vanilla JavaScript served by `HtmlService`.
 
+> **This repository is configured as a public demonstration build.** It is a
+> demonstration environment with fictional data, **not** a production
+> employee-management system. See [Public demonstration](#public-demonstration).
+
+## Contents
+
+- [Features](#features)
+- [Time-tracking rules enforced](#time-tracking-rules-enforced)
+- [Public demonstration](#public-demonstration) — URL, configuration, security audit, reset
+- [Architecture and data flow](#architecture-and-data-flow)
+- [Prerequisites and local setup](#prerequisites-and-local-setup)
+- [Running the tests](#running-the-tests)
+- [Known limitations](#known-limitations)
+- [AI tools and models used](#ai-tools-and-models-used)
+- [Defects found and fixed](#defects-found-and-fixed)
+- [Files](#files)
+
 ## Features
 
-**Manager console** (served at the base web-app URL once an administrator
-has unlocked access — see "Access gate" below)
+**Manager console** (the base web-app URL; no sign-in)
 
 - View the list of employees with their accumulated time and timer status.
-  (Workspace tokens are no longer returned in the list — see Details.)
-- Create an employee with last/first/middle name, email, and an initial
-  task. Saving an employee sends an invitation email containing their
-  personal workspace link. Email success/failure is reported honestly.
-- Inspect an employee's Details: tasks, work sessions, current timer, total
-  recorded time, workspace URL, and buttons to **Copy workspace link** and
-  **Rotate workspace token** (immediately invalidates the old link).
-- Assign a new task to an employee (or change their current task) without
-  deleting their historical time records.
-- Generate a report for a date range showing per-employee working time and
-  "tasks whose creation date falls in the selected period".
+- Create an employee with last/first/middle name, email and an initial task.
+  In the demonstration build **no email is sent** (see below).
+- Inspect an employee's **Details**: tasks, work sessions, current timer,
+  total recorded time, the personal workspace link, **Copy workspace link**
+  and **Rotate workspace token** (immediately invalidates the old link).
+- Assign a new task to an employee without deleting historical records.
+- Generate a report for a date range: per-employee working time, the
+  sessions inside the range, and tasks whose creation date falls in it.
+  An empty range returns a clear "No activity in the selected period."
+- (Demo only) **Load fictional sample data** when the demo has no employees.
 
-**Employee workspace** (served at `<base URL>?page=employee&token=<token>`)
+**Employee workspace** (`<base URL>?page=employee&token=<token>`, opened from
+an employee's Details)
 
-- A permanent personal link.
-- View the currently assigned task.
-- Start a work session; pause (elapsed time stops accruing); resume later,
-  including on another day; finish the task.
-- See the full history of work sessions and accumulated time for the
-  active task.
+- View the assigned task; **Start**, **Pause**, **Resume**, **Finish**.
+- Live elapsed time, restored from the server after a refresh or reopen.
+- Full history of work sessions.
 
 ## Time-tracking rules enforced
 
-- Elapsed time is computed from timestamps persisted on the server, not
-  from a client-side counter. Closing the browser cannot make the timer
-  drift.
+- Elapsed time is computed from timestamps persisted on the server, not from
+  a client-side counter. Closing the browser cannot make the timer drift.
 - A paused session is closed with a frozen `durationMs`. Resuming creates a
   new session row; every interval is auditable.
-- Overnight gaps, pauses, and browser downtime are never counted because
-  they are not inside any session interval.
-- Starting a session when one is already running is rejected; the sheet
-  never contains two active sessions for the same employee.
-- All critical writes (start, pause, resume, finish, assign-task, create,
-  rotate token, setupSheets) take `LockService.getScriptLock()`.
+- Pauses, overnight gaps and browser downtime are never counted because they
+  are not inside any session interval.
+- Starting a session while one is running is rejected; the sheet never
+  contains two active sessions for the same employee.
+- All critical writes take `LockService.getScriptLock()`.
 - Employee creation is atomic: if the initial-task insert fails, the
-  Employees row is rolled back so a retry can succeed.
-- Changing a task while a session is running auto-closes the session with
-  status `paused` against the original task. The old task is marked
-  `replaced`; historical sessions are never retargeted.
+  Employees row is rolled back.
+- Assigning a task while a session is running closes that session as
+  `paused` against the original task; the old task becomes `replaced`;
+  historical sessions are never retargeted or deleted.
 
-## Access gate (security)
+## Public demonstration
 
-The deployed `/exec` URL is a public endpoint (Apps Script's web-app
-"Anyone with the link" setting is the only workable choice because
-employees reach their workspaces anonymously). **There is no login.**
-Anyone who has the `/exec` URL and the deployment is unlocked can create
-employees, change tasks, read reports, and inspect every employee's
-workspace token.
+### Public URL
 
-To make that posture explicit and prevent an accidentally public rollout
-the script starts in **LOCKED** mode. `doGet` returns an "unconfigured"
-page and every `api_*` call throws until an administrator does the
-following, once:
+**Not deployed / not verified yet.** No public web-app deployment exists at
+the time of writing: creating it was blocked in the session that prepared
+this code, so the URL is intentionally left blank rather than invented.
 
-1. Open the Apps Script editor.
-2. From the function dropdown, pick `enableOpenAccess`.
-3. Click **Run** and approve the OAuth scopes if prompted.
+> Public demonstration URL: _pending — to be filled in only after the
+> deployment steps below were run and the Scenario A–G checks were executed
+> against it._
 
-Running `enableOpenAccess()` sets the Script Property `ACCESS_MODE = OPEN`.
-To re-lock the deployment, run `disableOpenAccess()` from the same editor.
+### Remaining steps to publish (owner only)
 
-### Decisions required from the Product Owner
+1. Open the Apps Script editor of the test project (the one `clasp` created;
+   its id is in `.clasp.json`, which is gitignored).
+2. **Arm and run the integration tests** (re-authorizes the trimmed scope
+   set, and proves the new guards in the real runtime):
+   Project Settings → *Script properties* → add `ADMIN_MODE` = `runTests`
+   (the value is the name of the one function being armed), then
+   select `runTests` and Run. Expected: `28/28 passed` in the log.
+3. **Reset to the known initial state:** add `ADMIN_MODE` = `resetDemoData`, then
+   run `resetDemoData`.
+4. Deploy → New deployment → *Web app* → Execute as **Me**, Who has access
+   **Anyone** (this is what `appsscript.json` already declares). Copy the
+   `/exec` URL.
+5. Run the verification checklist below in a private/incognito window and
+   only then record the URL above.
 
-- Confirm that the manager console is intentionally shared without
-  authentication, OR replace this gate with a proper login (e.g. a
-  Managers sheet checked against `Session.getActiveUser().getEmail()` plus
-  deployment "Execute as: User accessing the web app"). Until that is
-  decided, the gate above is the safest compatible default.
-- Confirm the project `timeZone` in `appsscript.json` (default `Etc/UTC`).
-  Report date boundaries use that timezone — see "Reports and dates".
+Do **not** run `enableOpenAccess()`: the demo build does not use it.
+
+### What the demonstration environment is
+
+| Aspect | Setting |
+| --- | --- |
+| Web app | One Apps Script web app, *Execute as: Me*, *Access: Anyone* (anonymous). No Google sign-in; opens directly on the Manager page. |
+| Data | One dedicated Google Sheet (`Working Time Tracker — Test Env`) with `Employees`, `Tasks`, `WorkSessions`. Fictional data only. |
+| Isolation | The sheet is pinned by the `SPREADSHEET_ID` Script Property (set by the owner, never by a client). The app **refuses to start** unless that sheet's title contains the word *test* or *demo* (`DEMO_CONFIG` + `isDemoEnvironmentName`). |
+| Email | Hard-disabled: no code path sends mail in demo mode, and the `script.send_mail` OAuth scope was removed from the manifest. |
+| Write caps | 100 employees, 500 tasks, 3000 sessions (`DEMO_CONFIG.LIMITS`). Beyond that the UI says "Demo limit reached…". |
+| OAuth scopes | `spreadsheets`, `script.scriptapp` (only to learn the web-app URL). |
+| Persistence | Everything lives in the sheet; refreshes and reopening the URL keep all data. |
+
+### Security audit of the public surface
+
+The app has no login by design. Because the web app *executes as its owner*,
+whatever an anonymous visitor can call runs with the owner's permissions.
+The audit therefore enumerated everything an anonymous caller can reach.
+
+**Key finding.** `google.script.run` can call **every top-level function
+whose name does not end in `_`**, not only the `api_*` functions the UI uses.
+The earlier `ACCESS_MODE` gate protected only `api_*`; a visitor could open
+the browser console and call, for example, `employees_list()` (returns every
+employee's email and workspace token), `email_sendInvitation(...)` (send mail
+to any address as the owner), `setSpreadsheetId(...)` (point the app at a
+different spreadsheet of the owner), `enableOpenAccess()` or `runTests()`.
+
+| ID | Risk | Fix |
+| --- | --- | --- |
+| F-19 | Every non-underscore function publicly callable; the access gate was bypassable | About 50 internal functions (including the integration-test functions) renamed with a trailing `_` (private). The only public functions are now `doGet`, 12 `api_*` functions, the side-effect-free helpers in `pure.gs`, and four owner-only admin functions. `tests/surface.test.js` fails if a new public function appears, an `api_*` loses `safeApi_`/`requireOpenAccess_`, an admin function loses its guard, or the client calls anything but `api_*`. |
+| F-20 | `api_createEmployee` mailed an arbitrary, client-supplied address as the owner (spam relay) | Mail is skipped in demo mode, `email_sendInvitation_` throws before `MailApp` in demo mode, and the `script.send_mail` scope is removed from `appsscript.json`. |
+| F-21 | Public admin functions (`runTests`, `enableOpenAccess`, `disableOpenAccess`, `resetDemoData`; `setSpreadsheetId` was **removed**, it could not even be run with an argument from the editor and was only attack surface) | Each begins with `adminOnly_('<its own name>')`, which refuses unless the owner added Script Property `ADMIN_MODE=<that function's name>`. The check and the deletion of the property happen atomically under the script lock, before the operation starts, so a failed run does not stay armed and two callers cannot both consume it. Arming one function cannot unlock another. Visitors cannot create Script Properties. `getAccessMode`/`getConfiguredSpreadsheetId` made private (the latter leaked the sheet id). For a standalone project set Script Property `SPREADSHEET_ID` in Project Settings. |
+| F-25 | `doGet` created sheets in whatever spreadsheet was bound **before** checking the demo guard, and echoed raw setup error text to visitors | Access check now runs first; setup failures are logged and visitors see a fixed message. |
+| F-22 | Anonymous audience could fill the spreadsheet | Row caps in `appendRow_` for the three app sheets (demo only). |
+| F-23 | Running as the owner with the `spreadsheets` scope is broader than one workbook | Mitigated in code, not removed: the only spreadsheet ever opened is the pinned id; no client-supplied sheet/ctx/id reaches a service call (checked by the surface test); the title check fails closed. The narrower `spreadsheets.currentonly` scope was **not adopted** because it was not verified to work with `openById` in a web-app context. |
+| F-24 | Validation failures (over-long fields, bad report dates) were shown as a generic "server error" | `validateLength` and `parseYmdStrictUtc` now throw `UserError`, so the message is shown verbatim. |
+
+Other properties reviewed and left unchanged: cell formula injection is
+neutralized by `cellSafe` at the write boundary; HTML output is escaped on the
+client (`esc`) and server (`escapeHtml_`, `jsonForScript_`); non-user errors
+are replaced by a generic message by `safeApi_` and logged server-side only;
+no credential, token or key exists in client assets or the repository (the
+OAuth tokens live in `~/.clasprc.json`, outside the repo).
+
+### Reset procedure
+
+`resetDemoData()` restores the known initial state. It:
+
+- operates on exactly `Employees`, `Tasks`, `WorkSessions` of the pinned
+  spreadsheet (it clears their data rows, never deletes a sheet, and never
+  touches any other sheet or spreadsheet);
+- refuses unless the spreadsheet title contains *test* or *demo*;
+- re-seeds two fictional employees (`@example.com` addresses) with task
+  history and past sessions, so reports have content immediately;
+- is **not** callable by visitors: it requires the owner to add Script Property
+  `ADMIN_MODE=resetDemoData` first (Project Settings → Script properties),
+  and consumes it.
+
+Steps: add `ADMIN_MODE` = `resetDemoData` → select `resetDemoData` → Run → check the log
+line `resetDemoData: restored 2 employees, 4 tasks, 8 sessions.`
+
+Visitors have a separate, **non-destructive** helper: on an empty demo the
+Manager page offers *Load fictional sample data* (`api_loadDemoSample`), which
+only appends and refuses if any employee exists.
+
+There is deliberately no scheduled auto-reset, because it would wipe a
+reviewer's data and contradict the persistence requirement.
+
+### Architecture decision: why Apps Script is kept
+
+A separately hosted app with a dedicated database was considered and **not**
+adopted: the audit found the exposure was in the *callable surface*, which is
+fixable in place without changing the data model, UI or hosting. Remaining
+exposure (owner-executed anonymous web app; Apps Script quotas) is documented
+under [Known limitations](#known-limitations). If those limits are
+unacceptable, the escape hatch is a hosted app + managed database; that
+would be a separate, documented migration.
+
+### Verification checklist for the deployed URL
+
+Status of each scenario **in this repository's history**:
+
+| Scenario | Status |
+| --- | --- |
+| A Public access (incognito, no sign-in, Manager opens) | **Not executed** — no deployment yet |
+| B Employee creation + initial task | Covered by `test_createEmployeeAndLink_` (integration, not re-run after the changes); live check **not executed** |
+| C Timer lifecycle, duplicate-timer rejection | Covered by `test_startPauseResume_`, `test_noDuplicateActiveTimer_`; live check **not executed** |
+| D Persistence across refresh/reopen | Covered by `test_reloadRestoresState_`; live check **not executed** |
+| E History, task change, date-range reports, empty report | Covered by `test_changeTaskPreservesHistory_`, `test_reportFiltersByRange_`, `test_emptyReport_`, `test_demoSampleReportsMatchSessions_`, `test_demoSampleKeepsTaskHistory_`; live check **not executed** |
+| F Public security (no secrets, no email, admin functions refuse, internals not callable) | Static part **verified** (`tests/surface.test.js`, 17/17). Live part (call `employees_list`, `resetDemoData`, … from the browser console of the deployed page) **not executed** |
+| G Documentation matches implementation | Reviewed against the code; fresh-session URL check **not executed** |
 
 ## Architecture and data flow
 
 ```
 Browser (manager.html / employee.html)
-  |  google.script.run.<api_*>(args)   <-- throws if ACCESS_MODE != OPEN
+  |  google.script.run.<api_*>(args)   (only api_* is callable; see F-19)
   v
 Code.gs  (doGet, api_*, safeApi_, access gate, jsonForScript_)
-  |  service layer (all writes under LockService; UserError for safe msgs)
+  |  service layer (writes under LockService; UserError for safe messages)
   v
-Employees.gs / Tasks.gs / Sessions.gs / Reports.gs / Email.gs
+Employees_ / Tasks_ / Sessions_ / Reports_ / Demo (all *_ private functions)
   |  read/write via
   v
-Repository.gs  (generic row CRUD + cellSafe formula escaping)
+Repository.gs  (generic row CRUD + cellSafe formula escaping + demo row caps)
   |
   v
 Google Sheets: Employees / Tasks / WorkSessions
 ```
 
 Pure, side-effect-free helpers live in `src/pure.gs` (`overlapMs`,
-`sumSessionMs`, `sumSessionMsWithDiagnostics`, `isValidEmail`, `sanitize`,
-`nextStateAfter`, `cellSafe`, `validateLength`, `parseYmdStrictUtc`,
-`UserError`, `FIELD_LIMITS`) and are tested from Node.js.
+`sumSessionMs`, `isValidEmail`, `sanitize`, `nextStateAfter`, `cellSafe`,
+`validateLength`, `parseYmdStrictUtc`, `UserError`, `isDemoEnvironmentName`,
+`checkRowLimit`, `buildDemoSample`, `FIELD_LIMITS`) and are tested from
+Node.js. They perform no service calls, so exposing them is harmless.
 
 ### Data model (Google Sheets)
 
 Three sheets are created automatically on first load. Rows carry stable
-UUIDs; row numbers are never used as identifiers.
+UUIDs; row numbers are never identifiers.
 
 **Employees** `id | lastName | firstName | middleName | email | workspaceToken | createdAt | active`
 
 **Tasks** `id | employeeId | title | status | createdAt | completedAt`
-
-- `status` ∈ `active | completed | replaced`
+(`status` ∈ `active | completed | replaced`)
 
 **WorkSessions** `id | employeeId | taskId | startTime | endTime | durationMs | status`
+(`status` ∈ `active | paused | completed`; `durationMs` frozen when closed)
 
-- `status` ∈ `active | paused | completed`
-- For `active` rows, `endTime` and `durationMs` are empty.
-- `durationMs` is frozen when the row is closed; historical rows stay
-  stable even if clocks drift.
+`ensureSheet_` refuses to rewrite a blank header row when data rows exist.
 
-Headers are added automatically on first run via `setupSheets()`. Repeat
-runs do not duplicate headers, do not reset data, and `ensureSheet_` now
-**refuses** to rewrite a blank header row when data rows already exist
-below it (prevents column realignment against existing data).
+### Input handling
 
-### Spreadsheet formula protection
+- Strings written to cells pass through `cellSafe` (prefix `'` for `=`, `+`,
+  `-`, `@`, `|`).
+- Length limits (server-side): names 100, email 320, task title 500.
+- Report dates must be strict `YYYY-MM-DD` valid calendar dates, interpreted
+  at UTC day boundaries (`timeZone` is `Etc/UTC`).
+- Validation errors are `UserError`s and reach the UI verbatim; anything else
+  is replaced by "A server error occurred…".
 
-Every string value written to a cell goes through `cellSafe()` in
-`src/pure.gs`. If the first non-whitespace/BOM/control character of a
-string is `=`, `+`, `-`, `@`, or `|`, a single apostrophe is prefixed
-(Google Sheets' text sentinel). Numbers, Dates, booleans, UUIDs, ISO
-timestamps and ordinary names pass through unchanged. On read-back from
-Sheets the apostrophe is stripped, so the application sees the user's
-original string. See `src/Tests.gs → test_formulaInjectionNeutralized`.
+## Prerequisites and local setup
 
-### Access-safe API responses
+- Node.js 18+ (the Node tests; the repo was exercised with Node 24).
+- A Google account, a dedicated **test** spreadsheet whose title contains
+  "test" or "demo", and `@google/clasp`:
+  ```bash
+  npm install -g @google/clasp
+  ```
+- Enable the Apps Script API at https://script.google.com/home/usersettings
+  and run `clasp login`.
+- On Windows run the script from **Git Bash** (it is a `.sh` file).
 
-- `api_listEmployees` returns name/email/totals/status only — **no token,
-  no workspace URL**.
-- `api_getEmployeeDetails` returns the workspace URL and (via its UI) the
-  Rotate button that revokes the current link.
-- `api_rotateWorkspaceToken(employeeId)` generates a new token under the
-  lock, returning the new workspace URL. The old link stops working
-  immediately.
-- Server-side errors sent to the browser are sanitized by `safeApi_` in
-  `Code.gs`: messages marked `userSafe` pass through; anything else is
-  logged full server-side and surfaced as "A server error occurred. Check
-  the Apps Script execution log."
-
-### Field length limits (`src/pure.gs → FIELD_LIMITS`)
-
-- `firstName`, `lastName`, `middleName`: 100 characters
-- `email`: 320 characters (RFC 5321 practical cap)
-- `taskTitle` (initial task and later assignments): 500 characters
-
-Enforced server-side. Client-side `maxlength` attributes mirror these.
-
-### Reports and dates
-
-- Report `from` / `to` must match `^\d{4}-\d{2}-\d{2}$` and be a valid
-  calendar date; impossible dates like `2024-02-30` are rejected.
-- Boundaries are built at UTC day start / end (`00:00:00.000Z` and
-  `23:59:59.999Z`) because the project's `timeZone` is `Etc/UTC`. If you
-  change `timeZone` in `appsscript.json`, update `parseYmdStrictUtc` to
-  match or document the intentional mismatch.
-- An "empty report" (no sessions and no tasks created in range) is
-  returned as `[]`; the UI shows an empty-state message.
-
-## Prerequisites
-
-- A Google account.
-- (Optional for local test runs) Node.js 18 or newer.
-
-## Setting up the Google Sheet
-
-**Path A — container-bound (simplest).** Create a Google Sheet,
-Extensions → Apps Script. The Apps Script project is bound to the sheet.
-On first unlocked request the three data sheets are created automatically.
-
-**Path B — standalone script.** Create the sheet separately, copy its ID,
-and from the Apps Script editor run
-`setSpreadsheetId("YOUR_SHEET_ID")` once.
-
-## Installing the code
-
-Two paths. The automated one is strongly preferred.
-
-### Automated (recommended) — `scripts/setup-apps-script.sh`
-
-Uses [clasp](https://github.com/google/clasp), Google's official Apps
-Script CLI. One repeatable script creates (or refreshes) a
-container-bound Apps Script project on your test spreadsheet and
-uploads every `src/*.gs` and `src/*.html` file. No file-by-file copy.
-
-Three one-time human prerequisites (do these on your own machine, once
-per Google account):
-
-1. Install Node.js 18 or newer and clasp:
-   ```bash
-   npm install -g @google/clasp
-   ```
-2. Enable the Apps Script API for your Google account at
-   https://script.google.com/home/usersettings (toggle "Google Apps
-   Script API" to ON).
-3. Run `clasp login` (opens a browser). On a headless machine use
-   `clasp login --no-localhost` and paste the code back.
-
-Then, from the repo root:
+Create (first run) or refresh the Apps Script project and upload every
+`src/*.gs` / `src/*.html` plus the manifest:
 
 ```bash
-SHEET_ID=<id of your test spreadsheet> ./scripts/setup-apps-script.sh
+SHEET_ID=<id of your test spreadsheet> bash ./scripts/setup-apps-script.sh
 ```
 
-Subsequent runs can omit `SHEET_ID` — clasp remembers the project via
-`.clasp.json` (gitignored, so it is per-user and never committed). The
-script opens the Apps Script editor at the end so you can pick
-`runTests` and click Run.
+Later runs can omit `SHEET_ID` (`.clasp.json`, gitignored, remembers the
+project). The script never deploys, never calls `enableOpenAccess()`, never
+sends email. It stages `appsscript.json` **after** `clasp create` (which would
+otherwise overwrite it with the default manifest).
 
-The script will NOT deploy the web app, NOT call `enableOpenAccess()`,
-and NOT send real emails. Nothing it does leaves the test spreadsheet
-and the Apps Script project it creates.
+Manual fallback: files in `src/` map 1-to-1 to files in the Apps Script
+project; paste `appsscript.json` into the manifest.
 
-### Manual (fallback)
+The container-bound project learns its spreadsheet from the container. For a
+standalone project, add Script Property `SPREADSHEET_ID` in Project
+Settings (there is deliberately no callable function that sets it).
 
-Files in `src/` map 1-to-1 to files inside the Apps Script project.
+## Running the tests
 
-| File in `src/`     | Apps Script name     | Type                                   |
-|---------------------|----------------------|----------------------------------------|
-| `appsscript.json`   | `appsscript.json`    | Manifest (enable in Project Settings)  |
-| `Code.gs`           | `Code`               | Script                                 |
-| `Config.gs`         | `Config`             | Script                                 |
-| `Email.gs`          | `Email`              | Script                                 |
-| `Employees.gs`      | `Employees`          | Script                                 |
-| `Reports.gs`        | `Reports`            | Script                                 |
-| `Repository.gs`     | `Repository`         | Script                                 |
-| `Sessions.gs`       | `Sessions`           | Script                                 |
-| `Setup.gs`          | `Setup`              | Script                                 |
-| `Tasks.gs`          | `Tasks`              | Script                                 |
-| `Tests.gs`          | `Tests`              | Script                                 |
-| `Utils.gs`          | `Utils`              | Script                                 |
-| `pure.gs`           | `pure`               | Script                                 |
-| `manager.html`      | `manager`            | HTML                                   |
-| `manager_js.html`   | `manager_js`         | HTML                                   |
-| `employee.html`     | `employee`           | HTML                                   |
-| `employee_js.html`  | `employee_js`        | HTML                                   |
-| `styles.html`       | `styles`             | HTML                                   |
-
-To enable the manifest in the editor: Project Settings → tick "Show
-`appsscript.json` manifest file in editor" → paste the contents.
-
-## Deploying as a web app
-
-1. Deploy → New deployment → Type: **Web app**.
-2. Execute as: **Me (the deploying user)**.
-3. Who has access: **Anyone with the link** (required so employee links
-   open anonymously).
-4. Approve the OAuth scopes on first deploy.
-5. **The deployment starts in LOCKED mode.** Run `enableOpenAccess` from
-   the Apps Script editor before sharing the URL with managers. Verify by
-   loading the `/exec` URL yourself and confirming the manager console
-   renders.
-
-## Required OAuth scopes
-
-Declared in `appsscript.json`:
-
-- `https://www.googleapis.com/auth/spreadsheets` — read/write sheets.
-- `https://www.googleapis.com/auth/script.send_mail` — send invitations
-  via `MailApp.sendEmail`.
-- `https://www.googleapis.com/auth/script.scriptapp` — read the web-app
-  URL for inclusion in emails and the manager console.
-
-The previously requested `userinfo.email` scope was removed (not used by
-any code path).
-
-## Running the automated tests
-
-**Node tests of pure logic** — run locally, no Google credentials:
+**Node (no Google credentials):**
 
 ```bash
-node tests/run.js
-# or
-npm test
+npm test          # same as: node tests/run.js
 ```
 
-Covers overlap maths, duration summing (including fallback to timestamp
-difference when `durationMs` is missing), state transitions, email
-validation, length limits, strict date parsing, `cellSafe` formula
-protection, the `UserError` marker, and the overnight-crossing scenario.
+Runs `tests/pure.test.js` (55 cases: overlap maths, duration summing,
+state transitions, validation, strict dates, `cellSafe`, `UserError`, demo
+helpers, and the demo sample's invariants) and `tests/surface.test.js`
+(17 cases: every `.gs` file parses; the public function allowlist; `api_*`
+gating; owner-only guards bound to their own name and consumed atomically
+under the lock; no function can set a spreadsheet id or Script Property;
+no callable non-declaration globals; `doGet` checks access before touching
+the sheet and never echoes error text; ids/URLs only read where intended;
+client only calls `api_*`; the single `MailApp` call is behind the demo
+hard stop; the manifest has no mail scope).
 
-**Apps Script integration tests** — must run inside Apps Script after
-installing the code and (if standalone) binding a spreadsheet. From the
-editor select `runTests` and click **Run**; results are logged to
-Logger / Executions.
+**Apps Script integration suite** (needs a real spreadsheet):
+Script Properties → add `ADMIN_MODE=runTests` → select `runTests` → Run → View →
+Logs. 28 tests, writing only to `Test_Employees`, `Test_Tasks`,
+`Test_WorkSessions` (plus short-lived `Test_Canary`/`Test_BlankHeaders`).
+`runTests` is owner-armed because it is publicly callable.
 
-The integration suite writes to dedicated `Test_Employees`, `Test_Tasks`,
-`Test_WorkSessions` sheets, and uses a one-off `Test_BlankHeaders` sheet
-that is deleted at the end of its test. Production data is never
-touched.
+What it covers: the 20 original tests (employee + link, assign task, start/
+pause/resume, midnight crossing, summing, state restore, duplicate timer,
+task change preserves history, range filter, empty report, input
+validation, pause with no session, formula injection, `updateRow_` throws,
+`closeSession_` rejects bad start, token rotation, length limits, strict
+dates, duration fallback, header-overwrite refusal) plus 8 added for the
+demo: reset touches only the target sheets; sample loads only into an empty
+demo; sample report totals equal stored session durations and an empty range
+is empty; a task change keeps all history; email is hard-disabled; admin
+functions refuse while disarmed or armed for a different function; arming
+is consumed on use; validation messages are user-safe.
 
-### What the Apps Script integration suite covers
+### Test results (exact counts)
 
-1. Create an employee and generate a personal workspace link.
-2. Assign a new task; old task marked `replaced`.
-3. Start → pause → resume: pause closes with frozen duration; resume opens
-   a new session row; starting a second time while one is active throws.
-4. Pre-midnight and post-midnight sessions: gap between them (crossing
-   midnight) is not counted.
-5. Total across multiple sessions is the sum of recorded intervals.
-6. Fresh read restores the active session and task.
-7. Starting a timer twice is rejected.
-8. Changing a task while a session is running preserves the original
-   task's elapsed time and leaves the new task at zero.
-9. Report filters correctly for a date range.
-10. Empty report returns `[]`.
-11. Invalid inputs rejected.
-12. Pausing with no active session rejected.
-13. **F-01**: Formula injection stored under a leading apostrophe; read-back
-    returns the user's string unchanged.
-14. **F-05**: `updateRow_` throws when the id does not exist.
-15. **F-13**: `closeSession_` throws when `startTime` cannot be parsed.
-16. **F-10**: Token rotation changes the token, invalidates the old link,
-    and the new link resolves.
-17. **F-14**: Server-side length limits enforced.
-18. **F-07**: Report date parsing rejects impossible/non-ISO inputs.
-19. **F-12**: `sumSessionMs` falls back to timestamp delta when
-    `durationMs` is missing but endpoints are valid.
-20. **F-17**: `ensureSheet_` refuses to rewrite a blank header above data.
+| Suite | Result | Where it was run |
+| --- | --- | --- |
+| Node `tests/pure.test.js` | **55/55 passed** | this repository, locally |
+| Node `tests/surface.test.js` | **17/17 passed** | this repository, locally |
+| Node `tests/gas-sim.test.js` — the real `src/*.gs` (including all 28 `runTests` tests) run against an in-memory **simulation** of Sheets/Properties/Lock | **22/22 passed**; the simulated `runTests` reported 28/28 | this repository, locally. **A simulation, not Apps Script**: no real quotas, lock contention, Sheets coercion or `google.script.run` rules |
+| Apps Script integration, original 20 tests | **20/20 passed** — reported by the project owner (baseline before these changes); not executed by the AI | owner's Apps Script editor |
+| Apps Script integration, current 28 tests | **Not executed.** The AI cannot run Apps Script services; the owner must arm `ADMIN_MODE` and run `runTests`. | — |
 
-### Verified in THIS environment
-
-- `node tests/run.js` — **45/45 passed** (final run against the current
-  tree; see the "Tests run" section below).
-- `node --check` on every `src/*.gs` file (copied to `.js` to satisfy
-  Node's extension check) — all parse cleanly.
-
-### NOT verified in this environment
-
-The Apps Script integration suite in `src/Tests.gs` has NOT been executed
-by the AI — Apps Script services (`SpreadsheetApp`, `MailApp`,
-`LockService`, `HtmlService`, `ScriptApp`) are only available in Google
-Apps Script runtime. It is unit-test-style code that will exercise the
-service and repository layers directly; execution requires a real
-spreadsheet. Treat the following behaviors as unverified until a human
-runs `runTests` and `enableOpenAccess` once end-to-end:
-
-- Email delivery via `MailApp`.
-- Live `LockService` contention under concurrent requests.
-- The templating of the inline workspace token via `jsonForScript_` in a
-  real browser.
-- First-request `setupSheets` behavior on a brand-new spreadsheet.
-- The actual OAuth consent screen with the trimmed scope set.
-
-## Manual test scenarios (require deployment)
-
-- Deploy, run `enableOpenAccess`, open Manager, add an employee with your
-  own email, confirm the invitation email arrives, open the link in a
-  private window, start a timer, close the window for a minute, reopen
-  the link, verify elapsed time jumped forward.
-- Pause and reopen later: elapsed time must not have grown while paused.
-- Pre-midnight start, resume next morning: total equals the two intervals
-  only.
-- Manager assigns a new task while employee has an active timer; reload
-  the employee's page: active task updated, old session preserved under
-  the original task.
-- Rotate workspace token from Details → old link now shows "Invalid
-  workspace link", new link works.
-- Generate a report for a one-week period with no activity → empty-state
-  message, no error.
-- Attempt to create an employee named `=HYPERLINK("http://evil","x")` →
-  the Sheets cell shows the literal formula text, Sheets does not evaluate
-  it, and the manager UI's name column also shows the literal text.
+The 20/20 baseline predates the function renaming (F-19) and must be
+re-run; it is not evidence that the current code works in Apps Script.
 
 ## Known limitations
 
-- **No authentication.** The manager console is unauthenticated. The
-  LOCKED-by-default access gate prevents accidental public access; the
-  decision to run `enableOpenAccess()` is the Product Owner's and is
-  reversible via `disableOpenAccess()`.
-- **Personal workspace links are bearer tokens.** Anyone with the link
-  can act as the employee. The token can be rotated from Details.
-- **Email delivery is reported but not retried.** On failure the manager
-  sees "Email delivery FAILED: …" and can copy the workspace link
-  manually; the employee row stays saved.
-- **No pagination.** Suitable for dozens of employees.
-- **UTC day boundaries.** Reports use UTC day boundaries; a manager in a
-  different timezone will see slight edge-of-day differences. Change
-  `timeZone` in `appsscript.json` (and `parseYmdStrictUtc` in step with
-  it) if a different timezone is required.
-- **No who-changed-what audit metadata.** Task changes are preserved but
-  not attributed; this build has no identity for the acting manager.
+- **No authentication, by design.** Anyone with the URL is a manager and can
+  read, change or delete everything in the demo sheet, including every
+  workspace token. Use fictional data only.
+- **Runs as the owner.** The deployment executes with the owner's permissions
+  (scopes `spreadsheets`, `script.scriptapp`). Isolation relies on the code
+  pinning one spreadsheet and exposing a tiny audited surface; a future code
+  defect would run with those permissions. Do not deploy this under an
+  account whose other spreadsheets matter if that residual risk is
+  unacceptable — use a dedicated Google account for the demo.
+- **Quotas.** Anonymous traffic consumes the owner's Apps Script quotas; a
+  heavy visitor can exhaust them and make the demo unavailable.
+- **Admin arming is one-shot but not authenticated.** Between the owner adding
+  `ADMIN_MODE=<function>` and running it, a visitor could in principle call
+  that same function first (only that one: the value is bound to it). The effect is what the owner wanted to run anyway, and
+  only against the pinned demo data.
+- **Workspace links are bearer tokens** (rotatable in Details).
+- **No pagination**; sized for the row caps above.
+- **UTC day boundaries** in reports.
+- **No audit trail of who changed what.**
+- **Non-demo use.** Set `DEMO_CONFIG.ENABLED = false` to fall back to the
+  `ACCESS_MODE` gate (arm `ADMIN_MODE`, run `enableOpenAccess`) and re-add the
+  `script.send_mail` scope to the manifest to restore invitation emails.
+  That configuration is **not** what this demo ships and was not retested.
 
 ## AI tools and models used
 
-- **Claude Code / Claude Opus 4.7** drafted the application and the
-  remediations in two coordinated passes. The author ran the Node tests
-  locally and performed static syntax checks on all `.gs` files. The
-  Apps Script integration tests have not been executed by the AI.
+Based on the repository's own records (git history and earlier README text):
 
-### Example prompts used during development
+- **Claude Code with Claude Opus 4.7** — recorded in the `Co-Authored-By`
+  trailer of commits `36a4cff` (initial application), `f46809d` (security
+  and data-integrity remediation), `b2a2ed3` (README) and `0d737a7` (setup
+  script); those commits also carry a `Claude-Session` link.
+- **Claude Code with Claude Sonnet 5.5** — recorded in the trailer of commit
+  `b44f304` (setup-script fixes); also used for the public-demo audit and
+  changes described in this README (those changes are uncommitted until the
+  owner commits them).
+- No other AI tools are recorded. Chat transcripts of the earlier sessions are
+  not part of the repository.
 
-Each prompt is followed by why it was used.
+### Representative prompts
+
+Earlier prompts are the ones documented previously in this README; the
+Sonnet 5.5 prompts are taken from this work session. Anything not listed here
+is **not available** in the repository.
 
 - "Design the Google Sheets data model for an employee time tracker where
-  pause creates an auditable interval and resume opens a new one."
-  — Used to settle the fundamental shape of a session row before writing
-  any code, so that pause/resume semantics would never require editing an
-  existing row's duration retroactively.
-- "Write a Google Apps Script `doGet` that serves two HTML templates
-  (manager and employee), where the employee template needs a token query
-  parameter and shows a readable error page when the token is unknown."
-  — Used to lock down the entry-point routing early, so the manager and
-  the employee workspaces share one web-app deployment and one base URL.
+  pause creates an auditable interval and resume opens a new one." — fixed
+  the session-row shape so durations never need retroactive edits.
+- "Write a Google Apps Script `doGet` that serves two HTML templates (manager
+  and employee)…" — one deployment, one base URL, readable error page.
 - "Add a `LockService.getScriptLock()` wrapper around start/pause/resume/
   finish so two concurrent requests cannot create a duplicate active
-  session." — Used to make the invariant "at most one active session per
-  employee" testable from the start, rather than retrofitting locks after
-  a race was observed.
-- "Write Node tests for an `overlapMs(sessionStart, sessionEnd,
-  rangeFrom, rangeTo, nowMs)` function returning the overlap of a session
-  with a date range in ms, treating a null sessionEnd as nowMs."
-  — Used to validate the report maths outside Google Apps Script so bugs
-  in overlap handling and overnight gaps could be caught locally.
-- "Write a cellSafe(value) that prefixes a leading apostrophe to any
-  string whose first non-whitespace/control character is `=`, `+`, `-`,
-  `@`, or `|`, and passes numbers, dates and booleans through."
-  — Used because an audit flagged that Google Sheets would evaluate a
-  name like `=HYPERLINK(...)` as a formula when a manager opens the
-  spreadsheet, so untrusted text had to be neutralized at the write
-  boundary.
-- "Return a JSON-safe literal for injection inside <script>, with angle
-  brackets, ampersands and U+2028/9 escaped." — Used to inject the
-  per-employee workspace token into the HTML template without relying on
-  the token's current character set, so a later change in token
-  generation cannot break the escaping.
+  session." — made "one active session per employee" an invariant.
+- "Write Node tests for an `overlapMs(...)` function…" — validated report
+  maths outside Apps Script.
+- "Write a cellSafe(value) that prefixes a leading apostrophe…" — closed the
+  spreadsheet formula-injection hole.
+- "Return a JSON-safe literal for injection inside <script>…" — safe
+  templating of the workspace token.
+- "Continue the existing project locally on this Windows computer … run the
+  existing setup script with `SHEET_ID` … report actual test results."
+  — drove the clasp setup, which exposed the two setup-script defects below.
+- "Prepare Working-Time-Tracker for public, unauthenticated demonstration …
+  review every publicly callable server-side function … do not call
+  `enableOpenAccess()` … propose an isolated alternative only if the
+  architecture cannot be made safe." — drove the audit F-19…F-24, the demo
+  mode, the reset procedure and `tests/surface.test.js`.
 
-### Errors found during development
+## Defects found and fixed
 
-- The initial `sumSessionMs` had the condition
-  `if (s.status === 'active' || !s.endTime)`. In practice this
-  misclassified every row whose test fixture omitted `endTime` — including
-  paused rows that correctly had a `durationMs` — causing `sumSessionMs`
-  to return 0 instead of the sum. The Node test
-  `sumSessionMs: sums closed durations` surfaced it on the first run
-  (`Expected 0 === 6000`). Tightening to `s.status === 'active'` only
-  moved the suite from 24/27 to 27/27.
-- During the remediation pass the fallback branch in
-  `sumSessionMsWithDiagnostics` was unreachable because `Number('')` is
-  `0`, which satisfied the "usable number" check. The new
-  `sumSessionMs: falls back to endpoints when durationMs missing` Node
-  test caught it. Fix: check that the raw value is not empty/null before
-  coercing, and only use the coerced number if it is finite and
-  non-negative. 45/45 passing after the fix.
+Evidence = an actual test or an observed command result.
 
-(If more defects surface during real deployment they will be appended
-here honestly rather than invented.)
+1. **`sumSessionMs` misclassified closed rows** (`status === 'active' ||
+   !s.endTime`) and returned 0; found by the Node test `sums closed
+   durations` (`Expected 0 === 6000`); fixed by testing only
+   `status === 'active'`.
+2. **Unreachable duration fallback**: `Number('')` is `0`, so a missing
+   `durationMs` never fell back to the timestamps; found by the Node test
+   `falls back to endpoints when durationMs missing`; fixed by checking the raw
+   value first. (Suite then 45/45.)
+3. **`setup-apps-script.sh` login check failed on clasp 3.4.1** because
+   `clasp login --status` no longer exists; observed as
+   `error: unknown option '--status'`; fixed with `clasp show-authorized-user`
+   (commit `b44f304`).
+4. **`setup-apps-script.sh` lost the manifest on first run**: `clasp create`
+   overwrites the staged `src/appsscript.json` with the default, so the first
+   push uploaded `America/New_York` and no scopes/webapp block; found by
+   cloning the remote project and diffing; fixed by staging after `create`
+   (commit `b44f304`).
+5. **Public-surface exposure (F-19…F-23)** found by code audit — see the
+   table above; guarded by `tests/surface.test.js`.
+6. **Validation errors shown as "server error" (F-24)**: found by reading
+   `safeApi_` against `validateLength`/`parseYmdStrictUtc`; fixed and covered
+   by Node tests (`failure is a user-safe error`, `every rejection is
+   user-safe`) and the integration test
+   `test_validationMessagesAreUserSafe_`.
 
-## How core scenarios were checked
-
-The scenarios below map 1-to-1 to the original mandatory requirements.
-"Node" = exercised by `node tests/run.js` in this environment (45/45
-passing on commit `f46809d`). "Apps Script" = covered by a test in
-`src/Tests.gs` whose code was reviewed but which requires a Google
-Apps Script project to execute. "Manual" = can only be observed in a
-deployed app.
-
-- **Adding an employee.** Apps Script: `test_createEmployeeAndLink`
-  (employee row + initial task row + workspace token). Node:
-  `isValidEmail` and `FIELD_LIMITS` tests gate the inputs.
-- **Starting a task with a description.** Apps Script:
-  `test_createEmployeeAndLink` (initial task gets the description) and
-  `test_assignTask` (replacement task carries a new description).
-- **Starting a timer.** Apps Script: `test_startPauseResume` creates a
-  session with status `active`; `test_noDuplicateActiveTimer` proves a
-  second start throws rather than creating a parallel timer.
-- **Stopping / finishing a timer.** Apps Script: `test_startPauseResume`
-  (pause closes the row with a frozen duration) and the
-  `sessions_finish` branch covered by the task-completion assertions.
-- **Restarting a timer (pause → resume).** Apps Script:
-  `test_startPauseResume` asserts that resume creates a NEW session row
-  (so history is auditable) and that the second row's id differs from
-  the first. The second session's duration is independent of the first
-  — the sum is additive, not re-based.
-- **Persistence after a restart.** Apps Script: `test_reloadRestoresState`
-  simulates a fresh read with no in-memory state and verifies the
-  active session and task are still found. Node:
-  `sumSessionMs: active session uses now - start` proves that the
-  elapsed-time calculation is derived from stored timestamps, so a
-  server or browser restart cannot lose or duplicate time.
-- **Timer across midnight.** Node: `scenario: pre-midnight +
-  post-midnight sessions, gap excluded` uses fixtures that straddle
-  00:00 UTC and asserts that only the two session intervals (10 min
-  total) are counted — the gap crossing midnight is excluded. Apps
-  Script: `test_crossDayNoOvernight` runs the same scenario against
-  Sheets.
-- **Reporting records and totals for a selected period.** Apps Script:
-  `test_reportFiltersByRange` creates a today session and a 10-days-ago
-  session, requests a yesterday→today report, and asserts the response
-  contains only the in-range interval. Node: `overlapMs: partial
-  overlap left/right` validates the arithmetic.
-- **Empty report behavior.** Apps Script: `test_emptyReport` requests
-  today→today on an empty data set and asserts the response is `[]`.
-  The manager UI then shows "No activity in the selected period."
-  rather than an error (see `src/manager_js.html`'s empty-state
-  branch).
-- **Duplicate employee email handling.** Apps Script:
-  `test_invalidInputsRejected` includes the duplicate-email case and
-  asserts the second create throws. The check is race-safe because
-  dedup and insert share a `LockService` critical section.
-- **Clear, truthful error messages.** Service functions throw
-  `UserError(message)` for user-facing failures ("A session is already
-  running.", "An employee with this email already exists.", "Date must
-  be in YYYY-MM-DD format.", etc.). The API boundary (`safeApi_` in
-  `src/Code.gs`) forwards these messages verbatim and replaces any
-  other error with "A server error occurred. Check the Apps Script
-  execution log." so internal details never leak. Email delivery is
-  never silently claimed successful — `api_createEmployee` returns
-  `{emailSent: false, emailError: ...}` on failure and the UI surfaces
-  it explicitly.
-
-The scenarios marked "Apps Script" have not been executed by the AI
-in this environment; they require installing the project into a
-Google Apps Script bound/standalone script and selecting `runTests`
-in the editor. The Node scenarios were run on commit `f46809d`.
+No defect is claimed from the live deployment because none has been run yet.
 
 ## Files
 
 ```
-appsscript.json         Apps Script manifest
+appsscript.json         Manifest (scopes: spreadsheets, script.scriptapp; web app: anyone, run as owner)
+scripts/
+  setup-apps-script.sh  clasp create/push (run with Git Bash on Windows)
 src/
   Code.gs               doGet, api_*, access gate, safeApi_, jsonForScript_
-  Config.gs             Spreadsheet lookup, sheet-name constants, setSpreadsheetId
-  Email.gs              Invitation email
+  Config.gs             DEFAULT_CONFIG, DEMO_CONFIG, spreadsheet lookup
+  Demo.gs               adminOnly_, demo environment check, row caps, sample data, resetDemoData
+  Email.gs              Invitation email (hard-disabled in the demo build)
   Employees.gs          Create (atomic, locked), assignTask, rotateToken
   Reports.gs            Date-range report (UTC boundaries, strict parse)
-  Repository.gs         Row CRUD + cellSafe escaping + throwing updateRow_
-  Sessions.gs           start / pause / resume / finish; closeSession_ throws on bad start
-  Setup.gs              Idempotent + locked + safe sheet creation
+  Repository.gs         Row CRUD + cellSafe + throwing updateRow_ + demo row caps
+  Sessions.gs           start / pause / resume / finish
+  Setup.gs              Idempotent, locked sheet creation
   Tasks.gs              Task CRUD
-  Tests.gs              Integration tests, runnable from the editor
+  Tests.gs              Integration tests (runTests, owner-armed)
   Utils.gs              UUIDs, token_, ISO helpers
-  pure.gs               Pure helpers (also exported for Node tests)
-  manager.html          Manager console markup
-  manager_js.html       Manager console script
-  employee.html         Employee workspace markup
-  employee_js.html      Employee workspace script
-  styles.html           Shared CSS
+  pure.gs               Pure helpers (also loaded by the Node tests)
+  manager.html, manager_js.html, employee.html, employee_js.html, styles.html
 tests/
-  pure.test.js          Node tests for src/pure.gs (45 cases)
-  load-pure.js          Loads pure.gs as a CommonJS module
-  run.js                Entry point
-package.json            `npm test` runs the Node suite
+  pure.test.js          Node tests for src/pure.gs (55 cases)
+  surface.test.js       Node static guards for the public surface (17 cases)
+  gas-sim.js            In-memory simulation of the Apps Script services used
+  gas-sim.test.js       Runs the real .gs files (incl. runTests) against the simulation (22 cases)
+  load-pure.js, run.js  Loader and entry point
+package.json            `npm test`
 ```

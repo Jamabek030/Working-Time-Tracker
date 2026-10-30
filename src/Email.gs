@@ -2,7 +2,10 @@
 // error. The api_* layer records emailSent = true only after this function
 // returns without throwing (audit F-02 crosscheck).
 
-function email_sendInvitation(employee, initialTaskTitle) {
+function email_sendInvitation_(employee, initialTaskTitle) {
+  // Hard stop for the public demo: an anonymous visitor must never be able to
+  // make the owner's account send mail to an address of their choosing.
+  if (DEMO_CONFIG.ENABLED) throw new Error('Email is disabled in the demonstration build.');
   var url = employeeWorkspaceUrl_(employee.workspaceToken);
 
   var subject = 'Your Working Time Tracker workspace';

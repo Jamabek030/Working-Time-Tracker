@@ -8,7 +8,7 @@
 //   below a blank/corrupt header — the operator must fix such a sheet by
 //   hand; silently rewriting the header could realign unrelated columns.
 
-function setupSheets(ctx) {
+function setupSheets_(ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);

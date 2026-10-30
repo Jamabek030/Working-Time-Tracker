@@ -10,6 +10,14 @@
 // `ACCESS_MODE` has been set to `OPEN` by running `enableOpenAccess()` from
 // the editor. The default LOCKED state renders an unconfigured notice page.
 //
+// Public callable surface (audit F-19): google.script.run can invoke EVERY
+// top-level function whose name does not end in "_", not just the ones the UI
+// uses. Therefore the only non-underscore functions in this project are:
+//   doGet, the api_* functions (all gated by requireOpenAccess_ and safeApi_),
+//   the pure helpers in pure.gs (no I/O), and a short list of owner-only admin
+//   functions that begin with adminOnly_(). tests/surface.test.js enforces
+//   this allowlist so a new public function cannot slip in unnoticed.
+//
 // Error sanitization (audit F-18): api_* calls go through `safeApi_`, which
 // surfaces messages marked `userSafe = true` as-is and replaces anything
 // else with a generic string, while logging the full error server-side.
@@ -17,19 +25,21 @@
 function doGet(e) {
   var params = (e && e.parameter) || {};
   var page = params.page || 'manager';
-  try {
-    setupSheets();
-  } catch (err) {
-    return htmlError_('Setup error', err.message);
-  }
-
+  // Access check FIRST: a spreadsheet that fails the demo check must not even
+  // get its sheets created. Failures are logged, never echoed to the visitor.
   if (!access_isOpen_()) {
     return htmlLockedNotice_();
+  }
+  try {
+    setupSheets_();
+  } catch (err) {
+    try { console.error('doGet setup failed: ' + (err && err.message ? err.message : String(err))); } catch (_) {}
+    return htmlError_('Setup error', 'The application could not initialise its data store. The owner can find details in the Apps Script execution log.');
   }
 
   if (page === 'employee') {
     var token = params.token || '';
-    var employee = employees_findByToken(token);
+    var employee = employees_findByToken_(token);
     if (!employee) {
       return htmlError_(
         'Invalid workspace link',
@@ -45,37 +55,47 @@ function doGet(e) {
   }
 
   var mgr = HtmlService.createTemplateFromFile('manager');
+  mgr.demoMode = DEMO_CONFIG.ENABLED;
   return mgr.evaluate()
     .setTitle('Working Time Tracker — Manager')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-function include(name) {
+function include_(name) {
   return HtmlService.createHtmlOutputFromFile(name).getContent();
 }
 
 // --- access gate ---------------------------------------------------------
 
 function access_isOpen_() {
+  // Demo build: access is granted only while the bound spreadsheet identifies
+  // itself as a test/demo one (fails closed otherwise). enableOpenAccess() is
+  // not part of the demo flow and is never called by it.
+  if (DEMO_CONFIG.ENABLED) return demo_environmentOk_();
   return (PropertiesService.getScriptProperties().getProperty('ACCESS_MODE') || 'LOCKED') === 'OPEN';
 }
 
 function enableOpenAccess() {
+  adminOnly_('enableOpenAccess');
   PropertiesService.getScriptProperties().setProperty('ACCESS_MODE', 'OPEN');
   return 'ACCESS_MODE = OPEN. The /exec URL now serves the manager console to anyone who has the link. Share the URL only with managers.';
 }
 
 function disableOpenAccess() {
+  adminOnly_('disableOpenAccess');
   PropertiesService.getScriptProperties().setProperty('ACCESS_MODE', 'LOCKED');
   return 'ACCESS_MODE = LOCKED. The /exec URL now shows the unconfigured notice.';
 }
 
-function getAccessMode() {
+function getAccessMode_() {
   return PropertiesService.getScriptProperties().getProperty('ACCESS_MODE') || 'LOCKED';
 }
 
 function requireOpenAccess_() {
   if (!access_isOpen_()) {
+    if (DEMO_CONFIG.ENABLED) {
+      throw UserError('The demonstration is unavailable: its environment check failed.');
+    }
     throw UserError('This deployment is locked. An administrator must run enableOpenAccess() in the Apps Script editor before the console can be used.');
   }
 }
@@ -110,6 +130,10 @@ function htmlError_(title, message) {
 }
 
 function htmlLockedNotice_() {
+  if (DEMO_CONFIG.ENABLED) {
+    return htmlError_('Demo unavailable',
+      'This demonstration refuses to start because its environment check failed: the bound spreadsheet must be a dedicated test/demo spreadsheet. Nothing was read or changed.');
+  }
   var body = [
     '<h1>Working Time Tracker — not yet configured</h1>',
     '<p>This deployment is in <strong>LOCKED</strong> mode. The manager console is intentionally unauthenticated: anyone who has this URL can create employees, change tasks and view reports once it is unlocked. To acknowledge this and switch on the console, an administrator must open the Apps Script editor, select <code>enableOpenAccess</code> from the function dropdown, and click Run.</p>',
@@ -129,7 +153,7 @@ function jsonForScript_(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
-function getWebAppUrl() {
+function getWebAppUrl_() {
   try {
     return ScriptApp.getService().getUrl() || '';
   } catch (e) {
@@ -138,7 +162,7 @@ function getWebAppUrl() {
 }
 
 function employeeWorkspaceUrl_(token) {
-  var baseUrl = getWebAppUrl();
+  var baseUrl = getWebAppUrl_();
   if (!baseUrl) return '';
   return baseUrl + (baseUrl.indexOf('?') < 0 ? '?' : '&') +
     'page=employee&token=' + encodeURIComponent(token);
@@ -149,11 +173,11 @@ function employeeWorkspaceUrl_(token) {
 function api_listEmployees() {
   return safeApi_('api_listEmployees', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employees = employees_list();
+    setupSheets_();
+    var employees = employees_list_();
     // Read sessions once and group by employeeId so the response is O(E + S)
     // sheet work rather than one full read per employee (audit F-08).
-    var allSessions = sessions_list();
+    var allSessions = sessions_list_();
     var byEmp = {};
     allSessions.forEach(function (s) {
       (byEmp[s.employeeId] = byEmp[s.employeeId] || []).push(s);
@@ -182,13 +206,16 @@ function api_listEmployees() {
 function api_createEmployee(data) {
   return safeApi_('api_createEmployee', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employee = employees_create(data);
+    setupSheets_();
+    var employee = employees_create_(data);
     var initialTask = sanitize(data && data.initialTask);
     var emailResult = { sent: false, error: '' };
+    var emailSkipped = DEMO_CONFIG.ENABLED;
     try {
-      email_sendInvitation(employee, initialTask);
-      emailResult.sent = true;
+      if (!emailSkipped) {
+        email_sendInvitation_(employee, initialTask);
+        emailResult.sent = true;
+      }
     } catch (err) {
       emailResult.error = err && err.message ? err.message : String(err);
       try { console.error('invitation email failed: ' + emailResult.error); } catch (_) {}
@@ -203,19 +230,32 @@ function api_createEmployee(data) {
         createdAt: employee.createdAt
       },
       emailSent: emailResult.sent,
-      emailError: emailResult.sent ? '' : emailResult.error
+      emailSkipped: emailSkipped,
+      emailError: (emailResult.sent || emailSkipped) ? '' : emailResult.error
     };
+  });
+}
+
+// Demo only: populate an EMPTY demonstration with fictional employees so a
+// reviewer can try reports immediately. Non-destructive: refuses when any
+// employee already exists.
+function api_loadDemoSample() {
+  return safeApi_('api_loadDemoSample', function () {
+    requireOpenAccess_();
+    if (!DEMO_CONFIG.ENABLED) throw UserError('Sample data is only available in the demonstration build.');
+    setupSheets_();
+    return demo_loadSampleIfEmpty_();
   });
 }
 
 function api_getEmployeeDetails(employeeId) {
   return safeApi_('api_getEmployeeDetails', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employee = employees_findById(employeeId);
+    setupSheets_();
+    var employee = employees_findById_(employeeId);
     if (!employee) throw UserError('Employee not found.');
-    var tasks = tasks_forEmployee(employeeId);
-    var sessions = sessions_forEmployee(employeeId);
+    var tasks = tasks_forEmployee_(employeeId);
+    var sessions = sessions_forEmployee_(employeeId);
     var activeTask = null;
     for (var i = 0; i < tasks.length; i++) if (tasks[i].status === 'active') { activeTask = tasks[i]; break; }
     var activeSession = null;
@@ -244,16 +284,16 @@ function api_getEmployeeDetails(employeeId) {
 function api_assignTask(employeeId, title) {
   return safeApi_('api_assignTask', function () {
     requireOpenAccess_();
-    setupSheets();
-    return employees_assignTask(employeeId, title);
+    setupSheets_();
+    return employees_assignTask_(employeeId, title);
   });
 }
 
 function api_rotateWorkspaceToken(employeeId) {
   return safeApi_('api_rotateWorkspaceToken', function () {
     requireOpenAccess_();
-    setupSheets();
-    var result = employees_rotateToken(employeeId);
+    setupSheets_();
+    var result = employees_rotateToken_(employeeId);
     return {
       employeeId: result.employeeId,
       workspaceUrl: employeeWorkspaceUrl_(result.workspaceToken)
@@ -264,8 +304,8 @@ function api_rotateWorkspaceToken(employeeId) {
 function api_generateReport(fromDate, toDate) {
   return safeApi_('api_generateReport', function () {
     requireOpenAccess_();
-    setupSheets();
-    return reports_generate(fromDate, toDate);
+    setupSheets_();
+    return reports_generate_(fromDate, toDate);
   });
 }
 
@@ -274,11 +314,11 @@ function api_generateReport(fromDate, toDate) {
 function api_getEmployeeState(token) {
   return safeApi_('api_getEmployeeState', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employee = employees_findByToken(token);
+    setupSheets_();
+    var employee = employees_findByToken_(token);
     if (!employee) throw UserError('Invalid workspace link.');
-    var tasks = tasks_forEmployee(employee.id);
-    var sessions = sessions_forEmployee(employee.id);
+    var tasks = tasks_forEmployee_(employee.id);
+    var sessions = sessions_forEmployee_(employee.id);
     var activeTask = null;
     for (var i = 0; i < tasks.length; i++) if (tasks[i].status === 'active') { activeTask = tasks[i]; break; }
     var activeSession = null;
@@ -308,39 +348,39 @@ function api_getEmployeeState(token) {
 function api_startSession(token) {
   return safeApi_('api_startSession', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employee = employees_findByToken(token);
+    setupSheets_();
+    var employee = employees_findByToken_(token);
     if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_start(employee.id);
+    return sessions_start_(employee.id);
   });
 }
 
 function api_pauseSession(token) {
   return safeApi_('api_pauseSession', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employee = employees_findByToken(token);
+    setupSheets_();
+    var employee = employees_findByToken_(token);
     if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_pause(employee.id);
+    return sessions_pause_(employee.id);
   });
 }
 
 function api_resumeSession(token) {
   return safeApi_('api_resumeSession', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employee = employees_findByToken(token);
+    setupSheets_();
+    var employee = employees_findByToken_(token);
     if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_resume(employee.id);
+    return sessions_resume_(employee.id);
   });
 }
 
 function api_finishTask(token) {
   return safeApi_('api_finishTask', function () {
     requireOpenAccess_();
-    setupSheets();
-    var employee = employees_findByToken(token);
+    setupSheets_();
+    var employee = employees_findByToken_(token);
     if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_finish(employee.id);
+    return sessions_finish_(employee.id);
   });
 }

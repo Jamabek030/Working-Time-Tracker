@@ -4,7 +4,7 @@
 // to close a row whose startTime cannot be parsed, so a corrupt row does not
 // turn into a plausible-looking zero-duration record (audit F-13).
 
-function sessions_list(ctx) {
+function sessions_list_(ctx) {
   ctx = ctx || getContext_();
   var rows = readAll_(ctx.sheets.SESSIONS);
   return rows.filter(function (r) { return r.id; }).map(function (r) {
@@ -20,28 +20,28 @@ function sessions_list(ctx) {
   });
 }
 
-function sessions_forEmployee(employeeId, ctx) {
-  return sessions_list(ctx).filter(function (s) { return s.employeeId === employeeId; });
+function sessions_forEmployee_(employeeId, ctx) {
+  return sessions_list_(ctx).filter(function (s) { return s.employeeId === employeeId; });
 }
 
-function sessions_forTask(taskId, ctx) {
-  return sessions_list(ctx).filter(function (s) { return s.taskId === taskId; });
+function sessions_forTask_(taskId, ctx) {
+  return sessions_list_(ctx).filter(function (s) { return s.taskId === taskId; });
 }
 
-function sessions_findActive(employeeId, ctx) {
-  var all = sessions_forEmployee(employeeId, ctx);
+function sessions_findActive_(employeeId, ctx) {
+  var all = sessions_forEmployee_(employeeId, ctx);
   for (var i = 0; i < all.length; i++) if (all[i].status === 'active') return all[i];
   return null;
 }
 
-function sessions_start(employeeId, ctx) {
+function sessions_start_(employeeId, ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var task = tasks_getActive(employeeId, ctx);
+    var task = tasks_getActive_(employeeId, ctx);
     if (!task) throw UserError('No active task assigned.');
-    var active = sessions_findActive(employeeId, ctx);
+    var active = sessions_findActive_(employeeId, ctx);
     if (active) throw UserError('A session is already running.');
     var session = {
       id: uuid_(),
@@ -59,12 +59,12 @@ function sessions_start(employeeId, ctx) {
   }
 }
 
-function sessions_pause(employeeId, ctx) {
+function sessions_pause_(employeeId, ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var active = sessions_findActive(employeeId, ctx);
+    var active = sessions_findActive_(employeeId, ctx);
     if (!active) throw UserError('No active session to pause.');
     return closeSession_(active, 'paused', ctx);
   } finally {
@@ -72,21 +72,21 @@ function sessions_pause(employeeId, ctx) {
   }
 }
 
-function sessions_resume(employeeId, ctx) {
+function sessions_resume_(employeeId, ctx) {
   // Same transition as start, but called via a different button on the UI.
-  return sessions_start(employeeId, ctx);
+  return sessions_start_(employeeId, ctx);
 }
 
-function sessions_finish(employeeId, ctx) {
+function sessions_finish_(employeeId, ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var task = tasks_getActive(employeeId, ctx);
+    var task = tasks_getActive_(employeeId, ctx);
     if (!task) throw UserError('No active task to finish.');
-    var active = sessions_findActive(employeeId, ctx);
+    var active = sessions_findActive_(employeeId, ctx);
     if (active) closeSession_(active, 'completed', ctx);
-    tasks_updateStatus(task.id, 'completed', ctx);
+    tasks_updateStatus_(task.id, 'completed', ctx);
     return { finishedTaskId: task.id };
   } finally {
     lock.releaseLock();
@@ -123,10 +123,10 @@ function closeSession_(session, status, ctx) {
   };
 }
 
-function sessions_totalForTask(taskId, ctx) {
-  return sumSessionMs(sessions_forTask(taskId, ctx), Date.now());
+function sessions_totalForTask_(taskId, ctx) {
+  return sumSessionMs(sessions_forTask_(taskId, ctx), Date.now());
 }
 
-function sessions_totalForEmployee(employeeId, ctx) {
-  return sumSessionMs(sessions_forEmployee(employeeId, ctx), Date.now());
+function sessions_totalForEmployee_(employeeId, ctx) {
+  return sumSessionMs(sessions_forEmployee_(employeeId, ctx), Date.now());
 }

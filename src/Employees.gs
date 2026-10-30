@@ -1,10 +1,10 @@
 // Employee domain operations.
 // Writes that span more than one sheet (create, assignTask, rotateToken) run
 // inside a LockService critical section so concurrent requests cannot
-// interleave; employees_create additionally rolls back the Employees row if
+// interleave; employees_create_ additionally rolls back the Employees row if
 // the dependent initial Tasks row cannot be inserted (audit F-02/F-03).
 
-function employees_list(ctx) {
+function employees_list_(ctx) {
   ctx = ctx || getContext_();
   var rows = readAll_(ctx.sheets.EMPLOYEES);
   return rows.filter(function (r) { return r.id; }).map(function (r) {
@@ -21,21 +21,21 @@ function employees_list(ctx) {
   });
 }
 
-function employees_findById(id, ctx) {
+function employees_findById_(id, ctx) {
   if (!id) return null;
-  var all = employees_list(ctx);
+  var all = employees_list_(ctx);
   for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
   return null;
 }
 
-function employees_findByToken(token, ctx) {
+function employees_findByToken_(token, ctx) {
   if (!token) return null;
-  var all = employees_list(ctx);
+  var all = employees_list_(ctx);
   for (var i = 0; i < all.length; i++) if (all[i].workspaceToken === token) return all[i];
   return null;
 }
 
-function employees_create(data, ctx) {
+function employees_create_(data, ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
@@ -59,7 +59,7 @@ function employees_create(data, ctx) {
 
     // Duplicate-email check and the pair of inserts share the lock, so no
     // concurrent request can slip between the check and the write.
-    var existing = employees_list(ctx);
+    var existing = employees_list_(ctx);
     for (var i = 0; i < existing.length; i++) {
       if ((existing[i].email || '').toLowerCase() === email) {
         throw UserError('An employee with this email already exists.');
@@ -78,14 +78,14 @@ function employees_create(data, ctx) {
     };
     appendRow_(ctx.sheets.EMPLOYEES, employee, DEFAULT_CONFIG.HEADERS.EMPLOYEES);
     try {
-      tasks_create({ employeeId: employee.id, title: initialTask }, ctx);
+      tasks_create_({ employeeId: employee.id, title: initialTask }, ctx);
     } catch (taskErr) {
       // Compensating delete so a retry can succeed and the duplicate-email
       // check does not block the user forever.
       try {
         deleteRow_(ctx.sheets.EMPLOYEES, 'id', employee.id, DEFAULT_CONFIG.HEADERS.EMPLOYEES);
       } catch (rollbackErr) {
-        try { console.error('employees_create rollback failed: ' + rollbackErr.message); } catch (_) {}
+        try { console.error('employees_create_ rollback failed: ' + rollbackErr.message); } catch (_) {}
       }
       throw taskErr;
     }
@@ -99,26 +99,26 @@ function employees_create(data, ctx) {
 // session is auto-closed (status 'paused') so its elapsed time stays
 // attached to the original task; the original task is marked 'replaced' and
 // a new 'active' task is created. Historical sessions are never retargeted.
-function employees_assignTask(employeeId, title, ctx) {
+function employees_assignTask_(employeeId, title, ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var employee = employees_findById(employeeId, ctx);
+    var employee = employees_findById_(employeeId, ctx);
     if (!employee) throw UserError('Employee not found.');
     var cleanTitle = sanitize(title);
     if (!cleanTitle) throw UserError('Task title is required.');
     validateLength(cleanTitle, FIELD_LIMITS.taskTitle, 'Task title');
 
-    var active = sessions_findActive(employeeId, ctx);
+    var active = sessions_findActive_(employeeId, ctx);
     if (active) {
       closeSession_(active, 'paused', ctx);
     }
-    var currentTask = tasks_getActive(employeeId, ctx);
+    var currentTask = tasks_getActive_(employeeId, ctx);
     if (currentTask) {
-      tasks_updateStatus(currentTask.id, 'replaced', ctx);
+      tasks_updateStatus_(currentTask.id, 'replaced', ctx);
     }
-    return tasks_create({ employeeId: employeeId, title: cleanTitle }, ctx);
+    return tasks_create_({ employeeId: employeeId, title: cleanTitle }, ctx);
   } finally {
     lock.releaseLock();
   }
@@ -127,12 +127,12 @@ function employees_assignTask(employeeId, title, ctx) {
 // Rotate the workspace token so an exposed personal link stops working. The
 // employee's identity, tasks and sessions are preserved; only the token
 // changes. The caller receives the new token so a fresh link can be shared.
-function employees_rotateToken(employeeId, ctx) {
+function employees_rotateToken_(employeeId, ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var employee = employees_findById(employeeId, ctx);
+    var employee = employees_findById_(employeeId, ctx);
     if (!employee) throw UserError('Employee not found.');
     var newToken = token_();
     updateRow_(ctx.sheets.EMPLOYEES, 'id', employeeId, { workspaceToken: newToken }, DEFAULT_CONFIG.HEADERS.EMPLOYEES);
@@ -142,6 +142,6 @@ function employees_rotateToken(employeeId, ctx) {
   }
 }
 
-function employees_fullName(e) {
+function employees_fullName_(e) {
   return [e.lastName, e.firstName, e.middleName].filter(function (x) { return x; }).join(' ');
 }

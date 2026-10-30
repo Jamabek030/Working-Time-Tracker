@@ -14,6 +14,17 @@ var DEFAULT_CONFIG = {
   }
 };
 
+// Public-demonstration switch. When ENABLED the app (a) only serves while the
+// bound spreadsheet's title contains the word "test" or "demo" (fails closed
+// on any other workbook), (b) never sends email, (c) caps how many rows an
+// anonymous audience can write. See Demo.gs and the README "Public demonstration"
+// section. Set ENABLED to false for a non-demo deployment (which then falls
+// back to the ACCESS_MODE gate).
+var DEMO_CONFIG = {
+  ENABLED: true,
+  LIMITS: { EMPLOYEES: 100, TASKS: 500, SESSIONS: 3000 }
+};
+
 function getContext_(overrides) {
   var ctx = {
     sheets: {
@@ -44,16 +55,10 @@ function getSpreadsheet_() {
   }
   throw new Error(
     'No spreadsheet configured. Either (a) deploy the script bound to a Google Sheet, ' +
-    'or (b) create a spreadsheet and run setSpreadsheetId("YOUR_SHEET_ID") once from the editor.'
+    'or (b) add the Script Property SPREADSHEET_ID in Project Settings.'
   );
 }
 
-function setSpreadsheetId(id) {
-  if (!id || typeof id !== 'string') throw new Error('setSpreadsheetId requires a spreadsheet ID string.');
-  PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', id);
-  return 'SPREADSHEET_ID set to ' + id;
-}
-
-function getConfiguredSpreadsheetId() {
+function getConfiguredSpreadsheetId_() {
   return PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || '';
 }

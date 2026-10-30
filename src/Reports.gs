@@ -10,15 +10,15 @@
 // start→end interval with the requested range. Pauses and overnight gaps
 // are not inside any session interval, so they are not counted.
 
-function reports_generate(fromDateStr, toDateStr, ctx) {
+function reports_generate_(fromDateStr, toDateStr, ctx) {
   ctx = ctx || getContext_();
   var from = parseYmdStrictUtc(fromDateStr, false);
   var to = parseYmdStrictUtc(toDateStr, true);
   if (from > to) throw UserError('From date must be on or before To date.');
 
-  var employees = employees_list(ctx);
-  var tasks = tasks_list(ctx);
-  var sessions = sessions_list(ctx);
+  var employees = employees_list_(ctx);
+  var tasks = tasks_list_(ctx);
+  var sessions = sessions_list_(ctx);
   var nowMs = Date.now();
   var fromMs = from.getTime();
   var toMs = to.getTime();
@@ -67,7 +67,7 @@ function reports_generate(fromDateStr, toDateStr, ctx) {
     });
     return {
       employeeId: emp.id,
-      name: employees_fullName(emp),
+      name: employees_fullName_(emp),
       email: emp.email,
       totalMs: totalMs,
       sessions: sessionsInRange,

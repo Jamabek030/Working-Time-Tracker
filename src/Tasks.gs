@@ -1,6 +1,6 @@
 // Task domain operations.
 
-function tasks_list(ctx) {
+function tasks_list_(ctx) {
   ctx = ctx || getContext_();
   var rows = readAll_(ctx.sheets.TASKS);
   return rows.filter(function (r) { return r.id; }).map(function (r) {
@@ -15,23 +15,23 @@ function tasks_list(ctx) {
   });
 }
 
-function tasks_forEmployee(employeeId, ctx) {
-  return tasks_list(ctx).filter(function (t) { return t.employeeId === employeeId; });
+function tasks_forEmployee_(employeeId, ctx) {
+  return tasks_list_(ctx).filter(function (t) { return t.employeeId === employeeId; });
 }
 
-function tasks_getActive(employeeId, ctx) {
-  var all = tasks_forEmployee(employeeId, ctx);
+function tasks_getActive_(employeeId, ctx) {
+  var all = tasks_forEmployee_(employeeId, ctx);
   for (var i = 0; i < all.length; i++) if (all[i].status === 'active') return all[i];
   return null;
 }
 
-function tasks_findById(taskId, ctx) {
-  var all = tasks_list(ctx);
+function tasks_findById_(taskId, ctx) {
+  var all = tasks_list_(ctx);
   for (var i = 0; i < all.length; i++) if (all[i].id === taskId) return all[i];
   return null;
 }
 
-function tasks_create(data, ctx) {
+function tasks_create_(data, ctx) {
   ctx = ctx || getContext_();
   var employeeId = sanitize(data && data.employeeId);
   var title = sanitize(data && data.title);
@@ -50,7 +50,7 @@ function tasks_create(data, ctx) {
   return task;
 }
 
-function tasks_updateStatus(taskId, status, ctx) {
+function tasks_updateStatus_(taskId, status, ctx) {
   ctx = ctx || getContext_();
   var updates = { status: status };
   if (status === 'completed' || status === 'replaced') {

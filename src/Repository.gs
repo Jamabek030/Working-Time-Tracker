@@ -23,7 +23,8 @@ function readAll_(sheetName) {
 function appendRow_(sheetName, obj, headers) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(sheetName);
-  if (!sheet) throw new Error('Sheet not found: ' + sheetName + ' (run setupSheets()).');
+  if (!sheet) throw new Error('Sheet not found: ' + sheetName + ' (run setupSheets_()).');
+  demo_checkRowCap_(sheetName, sheet);
   var row = headers.map(function (h) {
     var v = obj[h];
     if (v === undefined || v === null) return '';
@@ -60,7 +61,7 @@ function updateRow_(sheetName, idField, idValue, updates, headers) {
 }
 
 // Delete the row whose `idField` equals `idValue`. Used for atomic rollback
-// in employees_create. Returns true if a row was deleted, false otherwise.
+// in employees_create_. Returns true if a row was deleted, false otherwise.
 function deleteRow_(sheetName, idField, idValue, headers) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(sheetName);

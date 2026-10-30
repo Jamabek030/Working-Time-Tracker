@@ -77,7 +77,10 @@
     submitBtn.disabled = true;
     call('api_createEmployee', data).then(function (res) {
       var fullName = [res.employee.lastName, res.employee.firstName].filter(Boolean).join(' ');
-      if (res.emailSent) {
+      if (res.emailSkipped) {
+        status.className = 'status ok';
+        status.textContent = 'Created ' + fullName + '. Demo mode: no email is sent. Click Details to open the workspace and start a timer.';
+      } else if (res.emailSent) {
         status.className = 'status ok';
         status.textContent = 'Created ' + fullName + ' and the invitation email was accepted by Google. Click Details to copy the workspace link if the mail is not delivered.';
       } else {
@@ -94,6 +97,23 @@
     });
   });
 
+  // ---------- Demo sample data (only offered by the demo build) ----------
+  function showSampleButton(emptyEl) {
+    if (!window.WTT_DEMO || emptyEl.querySelector('button')) return;
+    var b = el('button', { type: 'button', class: 'secondary', text: 'Load fictional sample data' });
+    b.style.marginLeft = '8px';
+    b.addEventListener('click', function () {
+      b.disabled = true;
+      call('api_loadDemoSample').then(function () {
+        loadEmployees();
+      }).catch(function (err) {
+        b.disabled = false;
+        emptyEl.firstChild.textContent = err.message;
+      });
+    });
+    emptyEl.appendChild(b);
+  }
+
   // ---------- Employee list ----------
   function loadEmployees() {
     var table = $('#employees-table');
@@ -104,7 +124,7 @@
     loading.hidden = false; table.hidden = true; empty.hidden = true;
     call('api_listEmployees').then(function (list) {
       loading.hidden = true;
-      if (!list.length) { empty.hidden = false; return; }
+      if (!list.length) { empty.hidden = false; showSampleButton(empty); return; }
       var tbody = table.querySelector('tbody');
       tbody.innerHTML = '';
       list.forEach(function (e) {
@@ -154,7 +174,7 @@
     var head = el('div');
     head.innerHTML =
       '<div class="notice">Email: ' + esc(d.employee.email) + '</div>' +
-      '<div class="notice">Workspace link: <a class="link mono" href="' + esc(d.workspaceUrl) + '" target="_blank">' + esc(d.workspaceUrl || '(deploy script to show link)') + '</a></div>' +
+      '<div class="notice">Workspace link: <a class="link mono" href="' + esc(d.workspaceUrl) + '" target="_blank" rel="noopener">' + esc(d.workspaceUrl || '(deploy script to show link)') + '</a></div>' +
       '<div class="status">Total time: <strong>' + formatMs(d.totalMs) + '</strong> ' +
       (d.activeSession ? '<span class="pill active">timer running</span>' : '') + '</div>';
     if (d.dataWarnings && d.dataWarnings.length) {
