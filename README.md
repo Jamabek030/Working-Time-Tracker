@@ -187,6 +187,45 @@ and from the Apps Script editor run
 
 ## Installing the code
 
+Two paths. The automated one is strongly preferred.
+
+### Automated (recommended) — `scripts/setup-apps-script.sh`
+
+Uses [clasp](https://github.com/google/clasp), Google's official Apps
+Script CLI. One repeatable script creates (or refreshes) a
+container-bound Apps Script project on your test spreadsheet and
+uploads every `src/*.gs` and `src/*.html` file. No file-by-file copy.
+
+Three one-time human prerequisites (do these on your own machine, once
+per Google account):
+
+1. Install Node.js 18 or newer and clasp:
+   ```bash
+   npm install -g @google/clasp
+   ```
+2. Enable the Apps Script API for your Google account at
+   https://script.google.com/home/usersettings (toggle "Google Apps
+   Script API" to ON).
+3. Run `clasp login` (opens a browser). On a headless machine use
+   `clasp login --no-localhost` and paste the code back.
+
+Then, from the repo root:
+
+```bash
+SHEET_ID=<id of your test spreadsheet> ./scripts/setup-apps-script.sh
+```
+
+Subsequent runs can omit `SHEET_ID` — clasp remembers the project via
+`.clasp.json` (gitignored, so it is per-user and never committed). The
+script opens the Apps Script editor at the end so you can pick
+`runTests` and click Run.
+
+The script will NOT deploy the web app, NOT call `enableOpenAccess()`,
+and NOT send real emails. Nothing it does leaves the test spreadsheet
+and the Apps Script project it creates.
+
+### Manual (fallback)
+
 Files in `src/` map 1-to-1 to files inside the Apps Script project.
 
 | File in `src/`     | Apps Script name     | Type                                   |

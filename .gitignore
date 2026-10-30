@@ -1,5 +1,6 @@
 node_modules/
 .clasp.json
 .clasprc.json
+src/appsscript.json
 .DS_Store
 *.log
