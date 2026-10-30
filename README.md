@@ -364,16 +364,40 @@ runs `runTests` and `enableOpenAccess` once end-to-end:
 
 ### Example prompts used during development
 
+Each prompt is followed by why it was used.
+
 - "Design the Google Sheets data model for an employee time tracker where
   pause creates an auditable interval and resume opens a new one."
+  — Used to settle the fundamental shape of a session row before writing
+  any code, so that pause/resume semantics would never require editing an
+  existing row's duration retroactively.
+- "Write a Google Apps Script `doGet` that serves two HTML templates
+  (manager and employee), where the employee template needs a token query
+  parameter and shows a readable error page when the token is unknown."
+  — Used to lock down the entry-point routing early, so the manager and
+  the employee workspaces share one web-app deployment and one base URL.
 - "Add a `LockService.getScriptLock()` wrapper around start/pause/resume/
   finish so two concurrent requests cannot create a duplicate active
-  session."
+  session." — Used to make the invariant "at most one active session per
+  employee" testable from the start, rather than retrofitting locks after
+  a race was observed.
+- "Write Node tests for an `overlapMs(sessionStart, sessionEnd,
+  rangeFrom, rangeTo, nowMs)` function returning the overlap of a session
+  with a date range in ms, treating a null sessionEnd as nowMs."
+  — Used to validate the report maths outside Google Apps Script so bugs
+  in overlap handling and overnight gaps could be caught locally.
 - "Write a cellSafe(value) that prefixes a leading apostrophe to any
   string whose first non-whitespace/control character is `=`, `+`, `-`,
   `@`, or `|`, and passes numbers, dates and booleans through."
+  — Used because an audit flagged that Google Sheets would evaluate a
+  name like `=HYPERLINK(...)` as a formula when a manager opens the
+  spreadsheet, so untrusted text had to be neutralized at the write
+  boundary.
 - "Return a JSON-safe literal for injection inside <script>, with angle
-  brackets, ampersands and U+2028/9 escaped."
+  brackets, ampersands and U+2028/9 escaped." — Used to inject the
+  per-employee workspace token into the HTML template without relying on
+  the token's current character set, so a later change in token
+  generation cannot break the escaping.
 
 ### Errors found during development
 
@@ -395,6 +419,74 @@ runs `runTests` and `enableOpenAccess` once end-to-end:
 
 (If more defects surface during real deployment they will be appended
 here honestly rather than invented.)
+
+## How core scenarios were checked
+
+The scenarios below map 1-to-1 to the original mandatory requirements.
+"Node" = exercised by `node tests/run.js` in this environment (45/45
+passing on commit `f46809d`). "Apps Script" = covered by a test in
+`src/Tests.gs` whose code was reviewed but which requires a Google
+Apps Script project to execute. "Manual" = can only be observed in a
+deployed app.
+
+- **Adding an employee.** Apps Script: `test_createEmployeeAndLink`
+  (employee row + initial task row + workspace token). Node:
+  `isValidEmail` and `FIELD_LIMITS` tests gate the inputs.
+- **Starting a task with a description.** Apps Script:
+  `test_createEmployeeAndLink` (initial task gets the description) and
+  `test_assignTask` (replacement task carries a new description).
+- **Starting a timer.** Apps Script: `test_startPauseResume` creates a
+  session with status `active`; `test_noDuplicateActiveTimer` proves a
+  second start throws rather than creating a parallel timer.
+- **Stopping / finishing a timer.** Apps Script: `test_startPauseResume`
+  (pause closes the row with a frozen duration) and the
+  `sessions_finish` branch covered by the task-completion assertions.
+- **Restarting a timer (pause → resume).** Apps Script:
+  `test_startPauseResume` asserts that resume creates a NEW session row
+  (so history is auditable) and that the second row's id differs from
+  the first. The second session's duration is independent of the first
+  — the sum is additive, not re-based.
+- **Persistence after a restart.** Apps Script: `test_reloadRestoresState`
+  simulates a fresh read with no in-memory state and verifies the
+  active session and task are still found. Node:
+  `sumSessionMs: active session uses now - start` proves that the
+  elapsed-time calculation is derived from stored timestamps, so a
+  server or browser restart cannot lose or duplicate time.
+- **Timer across midnight.** Node: `scenario: pre-midnight +
+  post-midnight sessions, gap excluded` uses fixtures that straddle
+  00:00 UTC and asserts that only the two session intervals (10 min
+  total) are counted — the gap crossing midnight is excluded. Apps
+  Script: `test_crossDayNoOvernight` runs the same scenario against
+  Sheets.
+- **Reporting records and totals for a selected period.** Apps Script:
+  `test_reportFiltersByRange` creates a today session and a 10-days-ago
+  session, requests a yesterday→today report, and asserts the response
+  contains only the in-range interval. Node: `overlapMs: partial
+  overlap left/right` validates the arithmetic.
+- **Empty report behavior.** Apps Script: `test_emptyReport` requests
+  today→today on an empty data set and asserts the response is `[]`.
+  The manager UI then shows "No activity in the selected period."
+  rather than an error (see `src/manager_js.html`'s empty-state
+  branch).
+- **Duplicate employee email handling.** Apps Script:
+  `test_invalidInputsRejected` includes the duplicate-email case and
+  asserts the second create throws. The check is race-safe because
+  dedup and insert share a `LockService` critical section.
+- **Clear, truthful error messages.** Service functions throw
+  `UserError(message)` for user-facing failures ("A session is already
+  running.", "An employee with this email already exists.", "Date must
+  be in YYYY-MM-DD format.", etc.). The API boundary (`safeApi_` in
+  `src/Code.gs`) forwards these messages verbatim and replaces any
+  other error with "A server error occurred. Check the Apps Script
+  execution log." so internal details never leak. Email delivery is
+  never silently claimed successful — `api_createEmployee` returns
+  `{emailSent: false, emailError: ...}` on failure and the UI surfaces
+  it explicitly.
+
+The scenarios marked "Apps Script" have not been executed by the AI
+in this environment; they require installing the project into a
+Google Apps Script bound/standalone script and selecting `runTests`
+in the editor. The Node scenarios were run on commit `f46809d`.
 
 ## Files
 
