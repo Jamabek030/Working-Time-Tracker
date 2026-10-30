@@ -35,8 +35,9 @@ function tasks_create(data, ctx) {
   ctx = ctx || getContext_();
   var employeeId = sanitize(data && data.employeeId);
   var title = sanitize(data && data.title);
-  if (!employeeId) throw new Error('Employee is required.');
-  if (!title) throw new Error('Task title is required.');
+  if (!employeeId) throw UserError('Employee is required.');
+  if (!title) throw UserError('Task title is required.');
+  validateLength(title, FIELD_LIMITS.taskTitle, 'Task title');
   var task = {
     id: uuid_(),
     employeeId: employeeId,

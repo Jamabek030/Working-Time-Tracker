@@ -1,9 +1,9 @@
-// Email service. Throws on delivery failure so the caller can surface the error.
+// Email service. Throws on delivery failure so the caller can surface the
+// error. The api_* layer records emailSent = true only after this function
+// returns without throwing (audit F-02 crosscheck).
 
 function email_sendInvitation(employee, initialTaskTitle) {
-  var baseUrl = getWebAppUrl();
-  var url = baseUrl + (baseUrl.indexOf('?') < 0 ? '?' : '&') +
-    'page=employee&token=' + encodeURIComponent(employee.workspaceToken);
+  var url = employeeWorkspaceUrl_(employee.workspaceToken);
 
   var subject = 'Your Working Time Tracker workspace';
   var body = [
@@ -21,7 +21,7 @@ function email_sendInvitation(employee, initialTaskTitle) {
     '  - Click Resume to continue later, including on another day.',
     '  - Click Finish when the task is complete.',
     '',
-    'Your personal link is permanent. Keep it private: anyone who has the link can access your workspace.',
+    'Your personal link is permanent until a manager rotates it. Keep it private: anyone who has the link can access your workspace.',
     '',
     'Best,',
     'Working Time Tracker'

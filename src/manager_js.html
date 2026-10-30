@@ -79,10 +79,10 @@
       var fullName = [res.employee.lastName, res.employee.firstName].filter(Boolean).join(' ');
       if (res.emailSent) {
         status.className = 'status ok';
-        status.textContent = 'Created ' + fullName + ' and sent the invitation email.';
+        status.textContent = 'Created ' + fullName + ' and the invitation email was accepted by Google. Click Details to copy the workspace link if the mail is not delivered.';
       } else {
         status.className = 'status error';
-        status.textContent = 'Created ' + fullName + ', but email delivery FAILED: ' + (res.emailError || 'unknown error');
+        status.textContent = 'Created ' + fullName + ', but email delivery FAILED: ' + (res.emailError || 'unknown error') + '. Open Details to copy the workspace link manually.';
       }
       createForm.reset();
       loadEmployees();
@@ -115,7 +115,6 @@
           '<td>' + esc(e.email) + '</td>' +
           '<td>' + formatMs(e.totalMs) + '</td>' +
           '<td>' + (e.hasActiveSession ? '<span class="pill active">running</span>' : '<span class="pill">idle</span>') + '</td>' +
-          '<td><a class="link mono" href="' + esc(e.workspaceUrl) + '" target="_blank">' + esc(e.workspaceUrl || '(deploy script to show link)') + '</a></td>' +
           '<td></td>';
         var btn = el('button', { class: 'secondary', text: 'Details' });
         btn.addEventListener('click', function () { showDetails(e.id); });
@@ -158,11 +157,44 @@
       '<div class="notice">Workspace link: <a class="link mono" href="' + esc(d.workspaceUrl) + '" target="_blank">' + esc(d.workspaceUrl || '(deploy script to show link)') + '</a></div>' +
       '<div class="status">Total time: <strong>' + formatMs(d.totalMs) + '</strong> ' +
       (d.activeSession ? '<span class="pill active">timer running</span>' : '') + '</div>';
+    if (d.dataWarnings && d.dataWarnings.length) {
+      var warn = '<div class="status error">Data warnings: ' + d.dataWarnings.length + ' session row(s) could not be counted cleanly. See the server execution log.</div>';
+      head.insertAdjacentHTML('beforeend', warn);
+    }
     content.appendChild(head);
 
-    // Assign task form
+    // Workspace actions: copy + rotate.
+    var actions = el('div', { class: 'row-wrap', style: 'margin-top: 8px;' });
+    var copyBtn = el('button', { class: 'secondary', text: 'Copy workspace link' });
+    copyBtn.addEventListener('click', function () {
+      try {
+        navigator.clipboard.writeText(d.workspaceUrl).then(function () {
+          copyBtn.textContent = 'Copied!';
+          setTimeout(function () { copyBtn.textContent = 'Copy workspace link'; }, 1500);
+        });
+      } catch (_) {
+        prompt('Copy the workspace link:', d.workspaceUrl);
+      }
+    });
+    var rotateBtn = el('button', { class: 'warn', text: 'Rotate workspace token' });
+    rotateBtn.addEventListener('click', function () {
+      if (!confirm('Rotate this employee’s workspace token? The existing link stops working immediately and you must share the new link with them.')) return;
+      rotateBtn.disabled = true;
+      call('api_rotateWorkspaceToken', d.employee.id).then(function (res) {
+        d.workspaceUrl = res.workspaceUrl;
+        showDetails(d.employee.id);
+      }).catch(function (err) {
+        rotateBtn.disabled = false;
+        alert(err.message);
+      });
+    });
+    actions.appendChild(copyBtn);
+    actions.appendChild(rotateBtn);
+    content.appendChild(actions);
+
+    // Assign-task form.
     var form = el('form');
-    var input = el('input', { name: 'title', required: 'required', placeholder: 'New task title' });
+    var input = el('input', { name: 'title', required: 'required', placeholder: 'New task title', maxlength: '500' });
     form.appendChild(el('label', { text: 'Assign new task (closes any running session on the current task)' }, [input]));
     var btn = el('button', { type: 'submit', class: 'primary', text: 'Assign task' });
     form.appendChild(el('div', { class: 'row-wrap' }, [btn]));
@@ -186,7 +218,7 @@
     });
     content.appendChild(form);
 
-    // Tasks
+    // Tasks.
     content.appendChild(el('h3', { text: 'Tasks' }));
     if (!d.tasks.length) {
       content.appendChild(el('div', { class: 'status', text: 'No tasks yet.' }));
@@ -207,7 +239,7 @@
       content.appendChild(tt);
     }
 
-    // Sessions
+    // Sessions.
     content.appendChild(el('h3', { text: 'Work sessions' }));
     if (!d.sessions.length) {
       content.appendChild(el('div', { class: 'status', text: 'No sessions yet.' }));
@@ -289,14 +321,14 @@
           t.appendChild(tb);
           card.appendChild(t);
         } else {
-          card.appendChild(el('div', { class: 'status', text: 'No work sessions in range (tasks created in the period are shown below).' }));
+          card.appendChild(el('div', { class: 'status', text: 'No work sessions in the selected period.' }));
         }
-        if (r.tasks.length) {
-          card.appendChild(el('h3', { text: 'Tasks created in range' }));
+        if (r.tasksCreatedInRange && r.tasksCreatedInRange.length) {
+          card.appendChild(el('h3', { text: 'Tasks whose creation date falls in the selected period' }));
           var t2 = el('table');
           t2.innerHTML = '<thead><tr><th>Title</th><th>Status</th><th>Created</th><th>Closed</th></tr></thead>';
           var tb2 = el('tbody');
-          r.tasks.forEach(function (tk) {
+          r.tasksCreatedInRange.forEach(function (tk) {
             var tr = document.createElement('tr');
             tr.innerHTML =
               '<td>' + esc(tk.title) + '</td>' +

@@ -1,6 +1,8 @@
 // Work session (timer) operations. Each session row is one audited interval:
-// start -> end, with a frozen durationMs once closed. Pause closes the interval;
-// resume opens a fresh one.
+// start -> end, with a frozen durationMs once closed. Pause closes the
+// interval; resume opens a fresh one. closeSession_ throws when it is asked
+// to close a row whose startTime cannot be parsed, so a corrupt row does not
+// turn into a plausible-looking zero-duration record (audit F-13).
 
 function sessions_list(ctx) {
   ctx = ctx || getContext_();
@@ -38,9 +40,9 @@ function sessions_start(employeeId, ctx) {
   lock.waitLock(10000);
   try {
     var task = tasks_getActive(employeeId, ctx);
-    if (!task) throw new Error('No active task assigned.');
+    if (!task) throw UserError('No active task assigned.');
     var active = sessions_findActive(employeeId, ctx);
-    if (active) throw new Error('A session is already running.');
+    if (active) throw UserError('A session is already running.');
     var session = {
       id: uuid_(),
       employeeId: employeeId,
@@ -63,7 +65,7 @@ function sessions_pause(employeeId, ctx) {
   lock.waitLock(10000);
   try {
     var active = sessions_findActive(employeeId, ctx);
-    if (!active) throw new Error('No active session to pause.');
+    if (!active) throw UserError('No active session to pause.');
     return closeSession_(active, 'paused', ctx);
   } finally {
     lock.releaseLock();
@@ -81,7 +83,7 @@ function sessions_finish(employeeId, ctx) {
   lock.waitLock(10000);
   try {
     var task = tasks_getActive(employeeId, ctx);
-    if (!task) throw new Error('No active task to finish.');
+    if (!task) throw UserError('No active task to finish.');
     var active = sessions_findActive(employeeId, ctx);
     if (active) closeSession_(active, 'completed', ctx);
     tasks_updateStatus(task.id, 'completed', ctx);
@@ -94,9 +96,16 @@ function sessions_finish(employeeId, ctx) {
 function closeSession_(session, status, ctx) {
   ctx = ctx || getContext_();
   var startDate = parseIso_(session.startTime);
+  if (!startDate) {
+    throw new Error('Cannot close session ' + session.id + ': startTime is not a valid timestamp.');
+  }
   var endDate = new Date();
-  var startMs = startDate ? startDate.getTime() : endDate.getTime();
-  var durationMs = Math.max(0, endDate.getTime() - startMs);
+  var endMs = endDate.getTime();
+  var startMs = startDate.getTime();
+  if (endMs < startMs) {
+    throw new Error('Cannot close session ' + session.id + ': end time precedes start time.');
+  }
+  var durationMs = endMs - startMs;
   var updates = {
     endTime: endDate.toISOString(),
     durationMs: durationMs,

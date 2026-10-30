@@ -1,5 +1,8 @@
 // Generic row-level sheet access.
 // Rows are read/written as plain objects keyed by header names.
+// Every write passes user-controlled strings through `cellSafe` (defined in
+// pure.gs) which prefixes a leading `'` on values that would otherwise be
+// evaluated as a spreadsheet formula.
 
 function readAll_(sheetName) {
   var ss = getSpreadsheet_();
@@ -23,17 +26,21 @@ function appendRow_(sheetName, obj, headers) {
   if (!sheet) throw new Error('Sheet not found: ' + sheetName + ' (run setupSheets()).');
   var row = headers.map(function (h) {
     var v = obj[h];
-    return v === undefined || v === null ? '' : v;
+    if (v === undefined || v === null) return '';
+    return cellSafe(v);
   });
   sheet.appendRow(row);
 }
 
+// Updates the row whose `idField` equals `idValue`. Returns true on success.
+// Throws when the sheet or row is missing — the previous silent return had
+// callers happily report success when nothing was persisted (audit F-05).
 function updateRow_(sheetName, idField, idValue, updates, headers) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return false;
+  if (!sheet) throw new Error('Sheet not found: ' + sheetName);
   var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return false;
+  if (lastRow < 2) throw new Error('No rows in ' + sheetName + ' to update.');
   var idCol = headers.indexOf(idField) + 1;
   if (idCol <= 0) throw new Error('Unknown id field: ' + idField);
   var ids = sheet.getRange(2, idCol, lastRow - 1, 1).getValues();
@@ -41,14 +48,33 @@ function updateRow_(sheetName, idField, idValue, updates, headers) {
   for (var i = 0; i < ids.length; i++) {
     if (ids[i][0] === idValue) { rowIdx = i; break; }
   }
-  if (rowIdx < 0) return false;
+  if (rowIdx < 0) throw new Error('Row with ' + idField + '=' + idValue + ' not found in ' + sheetName + '.');
   var rowNum = rowIdx + 2;
-  var keys = Object.keys(updates);
-  keys.forEach(function (k) {
+  Object.keys(updates).forEach(function (k) {
     var col = headers.indexOf(k) + 1;
     if (col > 0) {
-      sheet.getRange(rowNum, col).setValue(updates[k]);
+      sheet.getRange(rowNum, col).setValue(cellSafe(updates[k]));
     }
   });
   return true;
+}
+
+// Delete the row whose `idField` equals `idValue`. Used for atomic rollback
+// in employees_create. Returns true if a row was deleted, false otherwise.
+function deleteRow_(sheetName, idField, idValue, headers) {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return false;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+  var idCol = headers.indexOf(idField) + 1;
+  if (idCol <= 0) return false;
+  var ids = sheet.getRange(2, idCol, lastRow - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i][0] === idValue) {
+      sheet.deleteRow(i + 2);
+      return true;
+    }
+  }
+  return false;
 }

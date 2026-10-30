@@ -1,13 +1,20 @@
-// Date-range reports. The reported duration for each session is the overlap of
-// its interval with the requested range; pauses and overnight gaps are
-// automatically excluded because they are not inside any session interval.
+// Date-range reports.
+//
+// Dates are parsed strictly in YYYY-MM-DD against a UTC calendar (audit
+// F-07): the project's own timeZone in appsscript.json is Etc/UTC, so UTC
+// boundaries are the only timezone this build should intermix. If a
+// future operator changes the project timezone, this parse must be
+// updated in lockstep.
+//
+// Session overlap for a report is the intersection of each session's own
+// start→end interval with the requested range. Pauses and overnight gaps
+// are not inside any session interval, so they are not counted.
 
 function reports_generate(fromDateStr, toDateStr, ctx) {
   ctx = ctx || getContext_();
-  var from = parseDateInput_(fromDateStr, false);
-  var to = parseDateInput_(toDateStr, true);
-  if (!from || !to) throw new Error('A valid date range is required.');
-  if (from > to) throw new Error('From date must be on or before To date.');
+  var from = parseYmdStrictUtc(fromDateStr, false);
+  var to = parseYmdStrictUtc(toDateStr, true);
+  if (from > to) throw UserError('From date must be on or before To date.');
 
   var employees = employees_list(ctx);
   var tasks = tasks_list(ctx);
@@ -16,9 +23,19 @@ function reports_generate(fromDateStr, toDateStr, ctx) {
   var fromMs = from.getTime();
   var toMs = to.getTime();
 
+  // Group sessions by employee once so per-employee building is linear.
+  var sessionsByEmp = {};
+  var tasksByEmp = {};
+  sessions.forEach(function (s) {
+    (sessionsByEmp[s.employeeId] = sessionsByEmp[s.employeeId] || []).push(s);
+  });
+  tasks.forEach(function (t) {
+    (tasksByEmp[t.employeeId] = tasksByEmp[t.employeeId] || []).push(t);
+  });
+
   var rows = employees.map(function (emp) {
-    var empTasks = tasks.filter(function (t) { return t.employeeId === emp.id; });
-    var empSessions = sessions.filter(function (s) { return s.employeeId === emp.id; });
+    var empTasks = tasksByEmp[emp.id] || [];
+    var empSessions = sessionsByEmp[emp.id] || [];
     var totalMs = 0;
     var sessionsInRange = [];
     empSessions.forEach(function (s) {
@@ -37,7 +54,12 @@ function reports_generate(fromDateStr, toDateStr, ctx) {
       });
     });
     sessionsInRange.sort(function (a, b) { return a.startTime < b.startTime ? -1 : 1; });
-    var tasksInRange = empTasks.filter(function (t) {
+
+    // Tasks whose createdAt falls inside the requested range — labelled
+    // "created in range" in the UI. This is distinct from "tasks the
+    // employee worked on in range", which is captured by the sessions
+    // array above (audit F-09).
+    var tasksCreatedInRange = empTasks.filter(function (t) {
       var created = parseIso_(t.createdAt);
       return created && created.getTime() >= fromMs && created.getTime() <= toMs;
     }).map(function (t) {
@@ -49,25 +71,14 @@ function reports_generate(fromDateStr, toDateStr, ctx) {
       email: emp.email,
       totalMs: totalMs,
       sessions: sessionsInRange,
-      tasks: tasksInRange
+      tasksCreatedInRange: tasksCreatedInRange
     };
   });
 
-  return rows.filter(function (r) { return r.sessions.length > 0 || r.tasks.length > 0; });
+  return rows.filter(function (r) { return r.sessions.length > 0 || r.tasksCreatedInRange.length > 0; });
 }
 
 function findTask_(list, id) {
   for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
   return null;
-}
-
-function parseDateInput_(s, endOfDay) {
-  if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    var parts = s.split('-');
-    var y = Number(parts[0]), m = Number(parts[1]) - 1, d = Number(parts[2]);
-    return new Date(y, m, d, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
-  }
-  var dt = new Date(s);
-  return isNaN(dt.getTime()) ? null : dt;
 }

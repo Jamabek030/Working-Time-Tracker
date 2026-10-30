@@ -9,7 +9,7 @@
 <header>
   <div class="container">
     <h1>Working Time Tracker — Manager</h1>
-    <div class="notice">Shared manager console. This page is not protected by authentication; anyone with the URL can use it. Share it only with managers.</div>
+    <div class="notice">Shared manager console. This page is not protected by authentication; anyone with the URL can use it. Share it only with managers. Workspace links for individual employees are shown only in Details.</div>
   </div>
 </header>
 <main class="container">
@@ -23,13 +23,13 @@
       <h2>Add employee</h2>
       <form id="create-form" autocomplete="off">
         <div class="row">
-          <label>Last name<input name="lastName" required></label>
-          <label>First name<input name="firstName" required></label>
-          <label>Middle name (optional)<input name="middleName"></label>
+          <label>Last name<input name="lastName" required maxlength="100"></label>
+          <label>First name<input name="firstName" required maxlength="100"></label>
+          <label>Middle name (optional)<input name="middleName" maxlength="100"></label>
         </div>
         <div class="row">
-          <label>Email<input name="email" type="email" required></label>
-          <label>Initial task or goal<input name="initialTask" required></label>
+          <label>Email<input name="email" type="email" required maxlength="320"></label>
+          <label>Initial task or goal<input name="initialTask" required maxlength="500"></label>
         </div>
         <div class="row-wrap">
           <button type="submit" class="primary">Create &amp; send invitation</button>
@@ -49,7 +49,6 @@
             <th>Email</th>
             <th>Total time</th>
             <th>Status</th>
-            <th>Workspace link</th>
             <th></th>
           </tr>
         </thead>
@@ -78,6 +77,7 @@
           <button type="submit" class="primary">Generate report</button>
         </div>
       </form>
+      <div class="notice">Date boundaries are interpreted in UTC (the Apps Script project's configured timezone). Change <code>timeZone</code> in <code>appsscript.json</code> if you need a different one.</div>
       <div id="report-status" class="status"></div>
       <div id="report-content"></div>
     </div>

@@ -9,7 +9,7 @@
 <header>
   <div class="container">
     <h1>Workspace — <?= employee.firstName ?> <?= employee.lastName ?></h1>
-    <div class="notice">Personal workspace link. Anyone who has this link can use this workspace, so keep it private.</div>
+    <div class="notice">Personal workspace link. Anyone who has this link can use this workspace, so keep it private. If the link leaks, ask your manager to rotate it.</div>
   </div>
 </header>
 <main class="container">
@@ -46,7 +46,7 @@
   </div>
 </main>
 <script>
-  var WORKSPACE_TOKEN = "<?= employee.workspaceToken ?>";
+  var WORKSPACE_TOKEN = <?!= workspaceTokenJs ?>;
 </script>
 <?!= include('employee_js'); ?>
 </body>
