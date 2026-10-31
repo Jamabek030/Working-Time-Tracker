@@ -53,7 +53,7 @@
 
   // ============================================================ overview
   var dashForm = $('#dash-form');
-  dashForm.from.value = U.utcDaysAgo(6);
+  dashForm.from.value = U.utcDaysAgo(13);
   dashForm.to.value = U.utcToday();
   dashForm.addEventListener('submit', function (ev) { ev.preventDefault(); loadDashboard(); });
 
@@ -415,7 +415,6 @@
     if ($('#employees-loading').className.indexOf('error') >= 0) return;
     var list = window.WTT_FILTER(S.employees, searchInput.value, filterSelect.value);
     empty.hidden = S.employees.length > 0;
-    $('#btn-sample').hidden = !(window.WTT_DEMO && S.employees.length === 0);
     noRes.hidden = !(S.employees.length > 0 && list.length === 0);
     table.hidden = list.length === 0;
     count.textContent = S.employees.length ? T('emp.count', { shown: list.length, total: S.employees.length }) : '';
@@ -425,13 +424,6 @@
       tbody.appendChild(h('tr', {}, [td(T('col.name'), fullName(e)), td(T('col.email'), e.email), td(T('col.status'), U.workStateBadge(e.workState)), td(T('col.total'), WTT.fmtMs(e.totalMs)), td(T('col.invite'), inviteBadge(e.invite)), td('', btn)]));
     });
   }
-  $('#btn-sample').addEventListener('click', function () {
-    var b = $('#btn-sample'); b.disabled = true;
-    call('api_loadDemoSample').then(function () { S.dash = null; return loadEmployees(); }).catch(function (err) {
-      setStatus($('#employees-empty'), 'error', err.message);
-    }).then(function () { b.disabled = false; });
-  });
-
   $('#details-close').addEventListener('click', function () { $('#details-card').hidden = true; S.empDetail = null; });
   function showEmployee(id) {
     var card = $('#details-card'), content = $('#details-content');

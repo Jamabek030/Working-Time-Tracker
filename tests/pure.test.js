@@ -285,56 +285,12 @@ test('checkRowLimit: allows below the cap, refuses at the cap with a user-safe m
   pure.checkRowLimit(99, 100, 'Employees');
   const e = assertThrows(() => pure.checkRowLimit(100, 100, 'Employees'));
   assertEq(e.userSafe, true);
-  assert(/Demo limit reached/.test(e.message), e.message);
+  assert(/Storage limit reached/.test(e.message), e.message);
 });
 test('checkRowLimit: a zero or missing cap means unlimited', () => {
   pure.checkRowLimit(1e6, 0, 'x');
   pure.checkRowLimit(1e6, undefined, 'x');
 });
-test('buildDemoSample: shape, fictional addresses and unique ids', () => {
-  let n = 0;
-  const s = pure.buildDemoSample(Date.UTC(2026, 9, 30, 12), () => 'id' + (++n), () => 'tok' + (++n));
-  assertEq(s.employees.length, 2);
-  s.employees.forEach(e => assert(/@example\.com$/.test(e.email), e.email));
-  const ids = [].concat(s.employees, s.tasks, s.sessions).map(r => r.id);
-  assertEq(new Set(ids).size, ids.length, 'ids unique');
-});
-test('buildDemoSample: one active task per employee, history preserved, no running session', () => {
-  let n = 0;
-  const s = pure.buildDemoSample(Date.UTC(2026, 9, 30, 12), () => 'id' + (++n), () => 'tok' + (++n));
-  s.employees.forEach(e => {
-    const mine = s.tasks.filter(t => t.employeeId === e.id);
-    assertEq(mine.filter(t => t.status === 'active').length, 1, e.firstName + ' active tasks');
-    assert(mine.length >= 2, 'has earlier tasks kept as history');
-  });
-  assertEq(s.sessions.filter(x => x.status === 'active').length, 0);
-});
-test('buildDemoSample: durations equal end-start and sessions never overlap per employee', () => {
-  let n = 0;
-  const s = pure.buildDemoSample(Date.UTC(2026, 9, 30, 12), () => 'id' + (++n), () => 'tok' + (++n));
-  s.sessions.forEach(x => assertEq(x.durationMs, new Date(x.endTime) - new Date(x.startTime)));
-  s.employees.forEach(e => {
-    const list = s.sessions.filter(x => x.employeeId === e.id).sort((a, b) => a.startTime < b.startTime ? -1 : 1);
-    for (let i = 1; i < list.length; i++) assert(list[i].startTime >= list[i - 1].endTime, 'overlap for ' + e.firstName);
-  });
-});
-test('buildDemoSample: report math over the sample equals the sum of durations; empty range is empty', () => {
-  let n = 0;
-  const now = Date.UTC(2026, 9, 30, 12);
-  const s = pure.buildDemoSample(now, () => 'id' + (++n), () => 'tok' + (++n));
-  const all = s.sessions.reduce((a, x) => a + x.durationMs, 0);
-  const from = Date.UTC(2000, 0, 1), to = Date.UTC(2100, 0, 1);
-  const viaOverlap = s.sessions.reduce((a, x) => a + pure.overlapMs(x.startTime, x.endTime, from, to, now), 0);
-  assertEq(viaOverlap, all);
-  const empty = s.sessions.reduce((a, x) => a + pure.overlapMs(x.startTime, x.endTime, Date.UTC(2000, 0, 1), Date.UTC(2000, 0, 2), now), 0);
-  assertEq(empty, 0);
-});
-test('buildDemoSample: sample data survives the formula-injection guard unchanged', () => {
-  let n = 0;
-  const s = pure.buildDemoSample(Date.now(), () => 'id' + (++n), () => 'tok' + (++n));
-  s.tasks.forEach(t => assertEq(pure.cellSafe(t.title), t.title));
-});
-
 // Runner ----------------------------------------------------------------
 
 let passed = 0;

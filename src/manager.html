@@ -29,7 +29,7 @@
     <div class="side-foot">
       <div class="profile">
         <span class="avatar" aria-hidden="true">M</span>
-        <div class="profile-text"><div class="profile-name" data-i18n="role.manager">Manager</div><div class="profile-sub" data-i18n="role.managerSub">Shared demo console</div></div>
+        <div class="profile-text"><div class="profile-name" data-i18n="role.manager">Manager</div><div class="profile-sub" data-i18n="role.managerSub">Full access</div></div>
       </div>
       <label for="lang-select" class="sr-only" data-i18n="lang.label">Language</label>
       <select id="lang-select" class="lang-select">
@@ -45,9 +45,6 @@
       <button type="button" class="menu-btn" id="menu-btn" aria-controls="sidebar" aria-expanded="false" data-i18n-aria="nav.menu" aria-label="Menu"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/></svg></button>
       <h1 id="view-title">Overview</h1>
     </header>
-    <? if (demoMode) { ?>
-    <div class="content-pad"><div class="banner" id="demo-banner" role="note" data-i18n="demo.banner"></div></div>
-    <? } ?>
 
     <main id="main" class="content">
 
@@ -237,7 +234,6 @@
           <div id="employees-loading" class="status" data-i18n="common.loading">Loading…</div>
           <div id="employees-empty" class="empty" hidden>
             <span data-i18n="emp.empty">No employees yet. Add one above.</span>
-            <button type="button" class="secondary" id="btn-sample" hidden data-i18n="emp.loadSample">Load fictional sample data</button>
           </div>
           <div id="employees-noresults" class="empty" hidden data-i18n="emp.noResults">No employees match the search.</div>
           <div class="table-wrap"><table id="employees-table" class="stack" hidden>
@@ -314,20 +310,13 @@
           <p class="hint" data-i18n="set.emailNote">Mail is sent only on request, only to non-example addresses, and within small daily limits. The owner can switch it off completely.</p>
         </div>
         <div class="card">
-          <h2 data-i18n="set.demo">About this demonstration</h2>
-          <ul class="plain">
-            <li data-i18n="set.demo1">All people and tasks here are fictional. Anyone with the link can see and change everything.</li>
-            <li data-i18n="set.demo2">Workspace links are personal: whoever holds one can use that employee's workspace.</li>
-            <li data-i18n="set.demo3">All dates and times are UTC.</li>
-            <li data-i18n="set.demo4">Resetting or cleaning the demo data is an owner-only operation in the Apps Script editor.</li>
-          </ul>
+          <h2 data-i18n="set.tz">Time zone</h2>
+          <p class="hint" data-i18n="set.tzNote">All dates and times are shown in UTC.</p>
         </div>
       </section>
     </main>
-    <footer class="footer"><span data-i18n="footer.note">Demonstration with fictional data. Times are shown in UTC.</span></footer>
   </div>
 </div>
-<script>window.WTT_DEMO = <?!= jsonForScript_(demoMode) ?>;</script>
 <script>window.WTT_DICT = <?!= jsonForScript_(I18N) ?>;
 window.WTT_RESOLVE_LANG = <?!= resolveLanguage.toString() ?>;
 window.WTT_FILTER = <?!= filterEmployees.toString() ?>;

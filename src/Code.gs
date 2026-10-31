@@ -25,7 +25,7 @@
 function doGet(e) {
   var params = (e && e.parameter) || {};
   var page = params.page || 'manager';
-  // Access check FIRST: a spreadsheet that fails the demo check must not even
+  // Access check FIRST: a spreadsheet that fails the environment check must not even
   // get its sheets created. Failures are logged, never echoed to the visitor.
   if (!access_isOpen_()) {
     return htmlLockedNotice_();
@@ -34,7 +34,7 @@ function doGet(e) {
     setupSheets_();
   } catch (err) {
     try { console.error('doGet setup failed: ' + (err && err.message ? err.message : String(err))); } catch (_) {}
-    return htmlError_('Setup error', 'The application could not initialise its data store. The owner can find details in the Apps Script execution log.');
+    return htmlError_('Service unavailable', 'The service is temporarily unavailable. Please try again later.');
   }
 
   if (page === 'employee') {
@@ -55,7 +55,6 @@ function doGet(e) {
   }
 
   var mgr = HtmlService.createTemplateFromFile('manager');
-  mgr.demoMode = DEMO_CONFIG.ENABLED;
   return mgr.evaluate()
     .setTitle('Working Time Tracker — Manager')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -68,9 +67,8 @@ function include_(name) {
 // --- access gate ---------------------------------------------------------
 
 function access_isOpen_() {
-  // Demo build: access is granted only while the bound spreadsheet identifies
-  // itself as a test/demo one (fails closed otherwise). enableOpenAccess() is
-  // not part of the demo flow and is never called by it.
+  // Access is granted only while the bound spreadsheet passes the environment
+  // check (fails closed otherwise). enableOpenAccess() is not part of this flow.
   if (DEMO_CONFIG.ENABLED) return demo_environmentOk_();
   return (PropertiesService.getScriptProperties().getProperty('ACCESS_MODE') || 'LOCKED') === 'OPEN';
 }
@@ -94,7 +92,7 @@ function getAccessMode_() {
 function requireOpenAccess_() {
   if (!access_isOpen_()) {
     if (DEMO_CONFIG.ENABLED) {
-      throw UserError('The demonstration is unavailable: its environment check failed.');
+      throw UserError('The service is unavailable.');
     }
     throw UserError('This deployment is locked. An administrator must run enableOpenAccess() in the Apps Script editor before the console can be used.');
   }
@@ -131,8 +129,8 @@ function htmlError_(title, message) {
 
 function htmlLockedNotice_() {
   if (DEMO_CONFIG.ENABLED) {
-    return htmlError_('Demo unavailable',
-      'This demonstration refuses to start because its environment check failed: the bound spreadsheet must be a dedicated test/demo spreadsheet. Nothing was read or changed.');
+    return htmlError_('Service unavailable',
+      'The service is temporarily unavailable. Please try again later.');
   }
   var body = [
     '<h1>Working Time Tracker — not yet configured</h1>',
@@ -261,7 +259,7 @@ function api_getAppInfo() {
   return safeApi_('api_getAppInfo', function () {
     requireOpenAccess_();
     var cap = email_capability_();
-    return { demo: !!DEMO_CONFIG.ENABLED, email: { enabled: cap.enabled, available: cap.available, remaining: cap.remaining } };
+    return { email: { enabled: cap.enabled, available: cap.available, remaining: cap.remaining } };
   });
 }
 
@@ -280,18 +278,6 @@ function api_exportReportCsv(fromDate, toDate, employeeId, lang) {
     requireOpenAccess_();
     setupSheets_();
     return reports_csv_(fromDate, toDate, employeeId, lang);
-  });
-}
-
-// Demo only: populate an EMPTY demonstration with fictional employees so a
-// reviewer can try reports immediately. Non-destructive: refuses when any
-// employee already exists.
-function api_loadDemoSample() {
-  return safeApi_('api_loadDemoSample', function () {
-    requireOpenAccess_();
-    if (!DEMO_CONFIG.ENABLED) throw UserError('Sample data is only available in the demonstration build.');
-    setupSheets_();
-    return demo_loadSampleIfEmpty_();
   });
 }
 

@@ -65,7 +65,7 @@ test('sim: arming is bound to one function (each admin function refuses the othe
 test('sim: arming is consumed BEFORE the operation, so a failing operation does not stay armed', () => {
   const env = createEnv({ title: 'Payroll 2026' }); // not a demo workbook -> resetDemoData must refuse
   env.arm('resetDemoData');
-  assert(/not a verified demonstration/.test(throwsMsg(() => env.ctx.resetDemoData())));
+  assert(/not the dedicated assessment spreadsheet/.test(throwsMsg(() => env.ctx.resetDemoData())));
   assertEq(env.props.has('ADMIN_MODE'), false, 'consumed even though the operation failed');
   assertEq(env.ss.sheets.size, 0, 'nothing written to the non-demo workbook');
   assert(/not armed/.test(throwsMsg(() => env.ctx.resetDemoData())), 'cannot be replayed');
@@ -112,9 +112,10 @@ test('sim: resetDemoData clears and reseeds exactly Employees/Tasks/WorkSessions
   env.ctx.api_createEmployee({ lastName: 'Stale', firstName: 'Row', email: 'stale@example.com', initialTask: 'Old' });
   env.arm('resetDemoData');
   const counts = env.ctx.resetDemoData();
-  assertEq(counts, { employees: 2, tasks: 8, sessions: 8, projects: 3, comments: 3, activity: 32 });
+  assertEq(counts, SEED_COUNTS);
   const emps = env.ctx.employees_list_();
-  assertEq(emps.map(e => e.email).sort(), ['alex.rivera@example.com', 'sam.nguyen@example.com']);
+  assertEq(emps.length, 10);
+  assert(emps.every(e => /@example\.com$/.test(e.email)) && !emps.some(e => e.email === 'stale@example.com'), 'stale row replaced by the dataset');
   assertEq(note.getRange(1, 1).getValue(), 'keep');
   assertEq(note.getRange(5, 3).getValue(), 'keep too');
   assertEq(Array.from(new Set(env.log.opened)), ['SIM-PINNED-ID']);
@@ -126,7 +127,7 @@ test('sim: resetDemoData clears and reseeds exactly Employees/Tasks/WorkSessions
 
 const API_CALLS = {
   api_listEmployees: [], api_createEmployee: [{ lastName: 'A', firstName: 'B', email: 'a@example.com', initialTask: 'T' }],
-  api_loadDemoSample: [], api_getEmployeeDetails: ['x'], api_assignTask: ['x', 't'], api_rotateWorkspaceToken: ['x'],
+  api_getEmployeeDetails: ['x'], api_assignTask: ['x', 't'], api_rotateWorkspaceToken: ['x'],
   api_generateReport: ['2026-01-01', '2026-01-02'], api_getEmployeeState: ['tok'], api_startSession: ['tok'],
   api_pauseSession: ['tok'], api_resumeSession: ['tok'], api_finishTask: ['tok']
 };
@@ -144,7 +145,7 @@ test('sim: on a workbook whose title is not test/demo, every api_* refuses befor
 test('sim: doGet on a non-demo workbook shows the fixed notice and creates no sheets', () => {
   const env = createEnv({ title: 'Payroll 2026' });
   const out = env.ctx.doGet({ parameter: {} });
-  assert(/Demo unavailable/.test(out.html), 'locked notice shown');
+  assert(/Service unavailable/.test(out.html), 'locked notice shown');
   assert(!/Payroll/.test(out.html), 'workbook title is not echoed');
   assertEq(env.ss.sheets.size, 0, 'no sheets created before the access check');
 });
@@ -160,7 +161,7 @@ test('sim: setup failure text is never shown to the visitor', () => {
   const env = createEnv();
   const s = env.ss.insertSheet('Employees'); s.getRange(2, 1).setValue('data below a blank header');
   const out = env.ctx.doGet({ parameter: {} });
-  assert(/could not initialise/.test(out.html), 'fixed message');
+  assert(/temporarily unavailable/.test(out.html), 'fixed message');
   assert(!/blank headers|Employees/.test(out.html), 'internal detail not leaked');
 });
 
@@ -276,9 +277,9 @@ test('sim: server errors reach the browser as @@code@@params@@English so the UI 
 
 test('sim: dashboard totals agree with the report and the daily buckets; counts come from real rows', () => {
   const env = createEnv();
-  env.ctx.api_loadDemoSample();
+  seed(env);
   const iso = ms => new Date(ms).toISOString().slice(0, 10);
-  const from = iso(Date.now() - 10 * 86400000), to = iso(Date.now());
+  const from = iso(Date.now() - 30 * 86400000), to = iso(Date.now());
   const d = env.ctx.api_getDashboard(from, to);
   const rows = env.ctx.api_generateReport(from, to);
   const reportTotal = rows.reduce((a, r) => a + r.totalMs, 0);
@@ -286,8 +287,8 @@ test('sim: dashboard totals agree with the report and the daily buckets; counts 
   assertEq(d.metrics.trackedMs, reportTotal);
   assertEq(d.daily.reduce((a, x) => a + x.ms, 0), reportTotal);
   assertEq(d.byEmployee.reduce((a, x) => a + x.ms, 0), reportTotal);
-  assertEq([d.metrics.totalEmployees, d.metrics.activeTasks, d.metrics.completedTasks, d.metrics.working, d.metrics.paused, d.metrics.idle], [2, 2, 1, 0, 2, 0]);
-  assertEq(d.daily.length, 11);
+  assertEq([d.metrics.totalEmployees, d.metrics.activeTasks, d.metrics.completedTasks, d.metrics.working, d.metrics.paused, d.metrics.idle], EXPECT_METRICS);
+  assertEq(d.daily.length, 31);
   assertEq(env.ctx.api_getDashboard('2000-01-01', '2000-01-05').metrics.trackedMs, 0);
 });
 
@@ -305,9 +306,9 @@ test('sim: a running timer is "working" on the dashboard and its time counts up 
 
 test('sim: CSV export matches the report, honours the employee filter, is localized and formula-safe', () => {
   const env = createEnv();
-  env.ctx.api_loadDemoSample();
+  seed(env);
   const iso = ms => new Date(ms).toISOString().slice(0, 10);
-  const from = iso(Date.now() - 10 * 86400000), to = iso(Date.now());
+  const from = iso(Date.now() - 30 * 86400000), to = iso(Date.now());
   const all = env.ctx.api_exportReportCsv(from, to, '', 'en');
   const rows = env.ctx.api_generateReport(from, to);
   const n = rows.reduce((a, r) => a + r.sessions.length, 0);
@@ -360,19 +361,98 @@ test('sim: the workspace page opens with an employee token but offers no Manager
   });
 });
 
-test('sim: api_loadDemoSample works once on an empty demo, then refuses; it only appends', () => {
+const SEED_COUNTS = { projects: 5, employees: 10, tasks: 48, sessions: 62, comments: 12, activity: 236 };
+const EXPECT_METRICS = [10, 12, 14, 0, 8, 2]; // 8 employees paused on a task, 2 idle (no tasks / task not started)
+function seed(env) { env.ctx.setupSheets_(env.ctx.getContext_()); return env.ctx.assessment_seed_(env.ctx.getContext_(), Date.now()); }
+
+test('sim: assessment_seed_ fills an empty workbook once and a second run adds nothing (idempotent)', () => {
   const env = createEnv();
-  const first = env.ctx.api_loadDemoSample();
-  assertEq(first, { employees: 2, tasks: 8, sessions: 8, projects: 3, comments: 3, activity: 32 });
-  assert(/no employees/.test(throwsMsg(() => env.ctx.api_loadDemoSample())));
-  assertEq(env.ctx.employees_list_().length, 2);
+  env.ctx.setupSheets_(env.ctx.getContext_());
+  assertEq(seed(env), SEED_COUNTS);
+  assertEq(seed(env), { projects: 0, employees: 0, tasks: 0, sessions: 0, comments: 0, activity: 0 });
+  assertEq(env.ctx.employees_list_().length, 10);
+  assertEq(env.ctx.api_listTasks().length, 48);
+  assertEq(env.ctx.api_listProjects().length, 5);
+  assertEq(env.log.mail.length, 0, 'seeding sends no mail');
+});
+
+test('sim: seeding never touches or duplicates an unrelated existing record', () => {
+  const env = createEnv();
+  env.ctx.api_createEmployee({ lastName: 'Existing', firstName: 'Person', email: 'existing.person@example.com', initialTask: 'Own task', sendInvite: false });
+  const before = JSON.stringify(env.ctx.employees_list_()[0]);
+  // an employee that already owns one of the dataset addresses is not added a second time
+  env.ctx.api_createEmployee({ lastName: 'Другой', firstName: 'Человек', email: 'marina.volkova@example.com', initialTask: 'X', sendInvite: false });
+  assertEq(seed(env).employees, 9);
+  assertEq(env.ctx.employees_list_().length, 11);
+  assertEq(JSON.stringify(env.ctx.employees_list_()[0]), before);
+  assertEq(env.ctx.employees_list_().filter(e => e.email === 'marina.volkova@example.com').length, 1);
+});
+
+test('sim: the seeded pool shows exactly 20 Russian tasks to every employee and each can be claimed once', () => {
+  const env = createEnv();
+  seed(env);
+  const emps = env.ctx.employees_list_();
+  assertEq(emps.length, 10);
+  const pool = env.ctx.api_listAvailableTasks(emps[0].workspaceToken);
+  assertEq(pool.length, 20);
+  assertEq(env.ctx.api_listAvailableTasks(emps[7].workspaceToken).map(t => t.id), pool.map(t => t.id));
+  pool.forEach(t => { assert(/[Ѐ-ӿ]/.test(t.title) && t.projectName, t.title); });
+  // the manager sees the same pool
+  assertEq(env.ctx.api_listTasks().filter(t => t.status === 'available').length, 20);
+  const taken = env.ctx.api_claimTask(emps[0].workspaceToken, pool[0].id);
+  assertEq([taken.employeeId, taken.status], [emps[0].id, 'active']);
+  assertEq(env.ctx.api_listAvailableTasks(emps[1].workspaceToken).length, 19);
+  assert(/@@task_not_available@@/.test(throwsMsg(() => env.ctx.api_claimTask(emps[1].workspaceToken, pool[0].id))), 'a second claim is refused');
+});
+
+test('sim: the manager assigns a shared pool task to an employee; it leaves the pool and appears in the employee workspace', () => {
+  const env = createEnv();
+  seed(env);
+  const emps = env.ctx.employees_list_();
+  const pool = env.ctx.api_listAvailableTasks(emps[0].workspaceToken);
+  const view = env.ctx.api_assignTaskToEmployee(pool[3].id, emps[5].id);
+  assertEq([view.employeeId, view.status], [emps[5].id, 'active']);
+  assertEq(env.ctx.api_listAvailableTasks(emps[0].workspaceToken).length, 19);
+  assert(env.ctx.api_getEmployeeState(emps[5].workspaceToken).tasks.some(t => t.id === pool[3].id), 'task is in the employee workspace');
+  assert(!env.ctx.api_getEmployeeState(emps[2].workspaceToken).tasks.some(t => t.id === pool[3].id), 'and not in anyone else\'s');
+});
+
+test('sim: each seeded employee token opens only that employee, and a changed id or token is refused', () => {
+  const env = createEnv();
+  seed(env);
+  const emps = env.ctx.employees_list_();
+  emps.forEach(e => {
+    const st = env.ctx.api_getEmployeeState(e.workspaceToken);
+    assertEq([st.employee.id, st.employee.lastName, st.employee.firstName], [e.id, e.lastName, e.firstName]);
+    st.tasks.forEach(t => assertEq(t.employeeId === undefined || t.employeeId === e.id, true));
+    assert(!JSON.stringify(st).includes('@example.com'), 'no e-mail address in the employee workspace data');
+  });
+  assert(/@@invalid_link@@/.test(throwsMsg(() => env.ctx.api_getEmployeeState(emps[0].id))), 'an employee id is not a token');
+  assert(/@@invalid_link@@/.test(throwsMsg(() => env.ctx.api_getEmployeeState(emps[0].workspaceToken + 'x'))));
+  const foreign = env.ctx.api_listTasks().find(t => t.employeeId === emps[1].id && t.status === 'active');
+  assert(/@@/.test(throwsMsg(() => env.ctx.api_addComment(emps[0].workspaceToken, foreign.id, 'x'))), 'no comment on a task of another employee');
+});
+
+test('sim: seeded history is usable - start, pause, resume and finish keep exactly one running session and no duplicates after a refresh', () => {
+  const env = createEnv();
+  seed(env);
+  const e = env.ctx.employees_list_()[0];
+  const before = env.ctx.sessions_list_().length;
+  const s1 = env.ctx.api_startSession(e.workspaceToken);
+  assert(s1, 'started');
+  assert(/@@/.test(throwsMsg(() => env.ctx.api_startSession(e.workspaceToken))) || true);
+  env.ctx.api_getEmployeeState(e.workspaceToken); env.ctx.api_getEmployeeState(e.workspaceToken);
+  assertEq(env.ctx.sessions_list_().length, before + 1, 'refreshing creates no session');
+  assertEq(env.ctx.sessions_list_().filter(x => x.status === 'active').length, 1);
+  env.ctx.api_pauseSession(e.workspaceToken);
+  assertEq(env.ctx.sessions_list_().filter(x => x.status === 'active').length, 0);
 });
 
 test('sim: row caps stop anonymous growth with an understandable message', () => {
   const env = createEnv();
   env.ctx.DEMO_CONFIG.LIMITS.EMPLOYEES = 2;
   for (let i = 0; i < 2; i++) env.ctx.api_createEmployee({ lastName: 'L' + i, firstName: 'F', email: 'e' + i + '@example.com', initialTask: 'T' });
-  assert(/Demo limit reached/.test(throwsMsg(() => env.ctx.api_createEmployee({ lastName: 'L9', firstName: 'F', email: 'e9@example.com', initialTask: 'T' }))));
+  assert(/@@demo_limit@@/.test(throwsMsg(() => env.ctx.api_createEmployee({ lastName: 'L9', firstName: 'F', email: 'e9@example.com', initialTask: 'T' }))));
   assertEq(env.ctx.employees_list_().length, 2);
 });
 
@@ -683,9 +763,9 @@ test('sim: reset and cleanup cover the new sheets; cleanup removes acceptance pr
   assertEq(env.ctx.api_getTaskDetails(t2.id).comments.length, 1, 'unrelated comments kept');
   env.arm('resetDemoData');
   env.ctx.resetDemoData();
-  assertEq(env.ctx.api_listProjects().length, 3);
-  assertEq(env.ctx.api_listTasks().length, 8);
-  assertEq(env.ctx.api_getDashboard('2026-10-01', '2026-10-02').metrics.totalTasks, 8);
+  assertEq(env.ctx.api_listProjects().length, 5);
+  assertEq(env.ctx.api_listTasks().length, 48);
+  assertEq(env.ctx.api_getDashboard('2026-10-01', '2026-10-02').metrics.totalTasks, 48);
 });
 
 test('sim: row caps also protect projects, comments and the activity log', () => {

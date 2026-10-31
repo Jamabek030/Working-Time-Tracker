@@ -1,5 +1,5 @@
 // Pure logic of the task model: states and transitions, overdue, filtering and the
-// integrity of the fictional sample data.
+// (the generated company dataset is covered by dataset.test.js).
 const { loadPure } = require('./load-pure');
 const pure = loadPure();
 
@@ -141,50 +141,6 @@ test('filterTasks: text search over title, description, project and employee; Cy
 test('filterTasks: source is self-contained (shipped to the browser as text)', () => {
   const fn = require('vm').runInNewContext('(' + pure.filterTasks.toString() + ')', {});
   assertEq(fn(T, { q: 'docs' }).length, 1);
-});
-
-// ---- sample data integrity ----------------------------------------------------------------------------
-
-function sample() { let n = 0; return pure.buildDemoSample(Date.UTC(2026, 9, 31, 12), () => 'id' + (++n), () => 'tok' + (++n)); }
-test('sample: every task, session, comment and activity row points at an existing parent', () => {
-  const s = sample();
-  const emp = new Set(s.employees.map(e => e.id)), proj = new Set(s.projects.map(p => p.id)), task = new Set(s.tasks.map(t => t.id));
-  s.tasks.forEach(t => { if (t.employeeId) assert(emp.has(t.employeeId), 'task employee'); if (t.projectId) assert(proj.has(t.projectId), 'task project'); });
-  s.sessions.forEach(x => { assert(task.has(x.taskId) && emp.has(x.employeeId), 'session parents'); });
-  s.comments.forEach(c => { assert(task.has(c.taskId), 'comment task'); if (c.authorType === 'employee') assert(emp.has(c.authorId), 'comment author'); });
-  s.activity.forEach(a => assert(task.has(a.taskId), 'activity task'));
-});
-test('sample: statuses and owners are consistent with the transition rules', () => {
-  const s = sample();
-  s.tasks.forEach(t => {
-    assert(['draft', 'available', 'active', 'completed', 'replaced'].indexOf(t.status) >= 0, t.status);
-    if (t.status === 'draft' || t.status === 'available') assertEq(t.employeeId, '', 'unowned tasks have no employee: ' + t.title);
-    else assert(t.employeeId, 'owned tasks have an employee: ' + t.title);
-    assert(pure.isValidPriority(t.priority), t.priority);
-    pure.normalizeDueDate(t.dueDate);
-  });
-  const statuses = s.tasks.map(t => t.status);
-  ['draft', 'available', 'active', 'completed'].forEach(k => assert(statuses.indexOf(k) >= 0, 'sample has a ' + k + ' task'));
-});
-test('sample: shows an overdue task and tasks with and without deadlines', () => {
-  const s = sample();
-  const today = '2026-10-31';
-  assertEq(s.tasks.filter(t => pure.isOverdue(t, today)).length, 1);
-  assert(s.tasks.some(t => !t.dueDate) && s.tasks.some(t => t.dueDate > today));
-});
-test('sample: comments are plain text, from both sides, and survive the formula guard unchanged', () => {
-  const s = sample();
-  assert(s.comments.some(c => c.authorType === 'manager') && s.comments.some(c => c.authorType === 'employee'));
-  s.comments.forEach(c => assertEq(pure.cellSafe(c.text), c.text));
-});
-test('sample: the activity log tells a consistent story (created before assigned/published before started)', () => {
-  const s = sample();
-  const order = { created: 0, published: 1, assigned: 1, claimed: 1, started: 2, paused: 3, completed: 3 };
-  s.tasks.forEach(t => {
-    const log = s.activity.filter(a => a.taskId === t.id).sort((a, b) => a.at < b.at ? -1 : 1);
-    assertEq(log[0].action, 'created', t.title);
-    log.forEach(a => assert(order[a.action] !== undefined, 'known action ' + a.action));
-  });
 });
 
 let passed = 0;

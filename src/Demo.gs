@@ -1,9 +1,9 @@
-// Public-demonstration support. Everything here is guarded so that an
-// anonymous visitor of the deployed /exec URL cannot use it for anything but
-// the documented, non-destructive demo behaviour (audit F-19..F-24).
+// Environment guard, owner-only administration and data seeding. Everything
+// here is guarded so that an anonymous visitor of the deployed /exec URL cannot
+// use it (audit F-19..F-24).
 //
-// Public (non-underscore) functions in this file: resetDemoData only, and it
-// is owner-gated by adminOnly_.
+// Public (non-underscore) functions in this file: seedAssessmentData,
+// resetDemoData and cleanupTestArtifacts; each is owner-gated by adminOnly_.
 
 // Owner-only gate for functions that must stay publicly *callable* because the
 // Apps Script editor can only run non-underscore functions. google.script.run
@@ -57,37 +57,42 @@ function demo_checkRowCap_(sheetName, sheet) {
   }
 }
 
-function demo_seed_(ctx) {
-  var sample = buildDemoSample(Date.now(), uuid_, token_);
-  sample.projects.forEach(function (r) { appendRow_(ctx.sheets.PROJECTS, r, DEFAULT_CONFIG.HEADERS.PROJECTS); });
-  sample.employees.forEach(function (r) { appendRow_(ctx.sheets.EMPLOYEES, r, DEFAULT_CONFIG.HEADERS.EMPLOYEES); });
-  sample.tasks.forEach(function (r) { appendRow_(ctx.sheets.TASKS, r, DEFAULT_CONFIG.HEADERS.TASKS); });
-  sample.sessions.forEach(function (r) { appendRow_(ctx.sheets.SESSIONS, r, DEFAULT_CONFIG.HEADERS.SESSIONS); });
-  sample.comments.forEach(function (r) { appendRow_(ctx.sheets.COMMENTS, r, DEFAULT_CONFIG.HEADERS.COMMENTS); });
-  sample.activity.forEach(function (r) { appendRow_(ctx.sheets.ACTIVITY, r, DEFAULT_CONFIG.HEADERS.ACTIVITY); });
-  return { employees: sample.employees.length, tasks: sample.tasks.length, sessions: sample.sessions.length,
-    projects: sample.projects.length, comments: sample.comments.length, activity: sample.activity.length };
-}
-
-// Reachable by anonymous visitors through api_loadDemoSample. Non-destructive:
-// it only ever appends, and only when there is not a single employee yet.
-function demo_loadSampleIfEmpty_(ctx) {
+// Appends the rows of the company scenario (src/dataset.gs) that are not there
+// yet. Rows are matched by their fixed ids (and employees also by email), so
+// running it again adds nothing and never duplicates anything. Existing rows are
+// never modified or removed.
+function assessment_seed_(ctx, nowMs) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    if (employees_list_(ctx).length > 0) {
-      throw UserError('Sample data can only be loaded while the demo has no employees.');
-    }
-    return demo_seed_(ctx);
+    var data = buildAssessmentDataset(nowMs || Date.now(), token_);
+    var plan = [['PROJECTS', 'projects'], ['EMPLOYEES', 'employees'], ['TASKS', 'tasks'],
+      ['SESSIONS', 'sessions'], ['COMMENTS', 'comments'], ['ACTIVITY', 'activity']];
+    var emails = {};
+    employees_list_(ctx).forEach(function (e) { emails[e.email.toLowerCase()] = true; });
+    var added = {};
+    plan.forEach(function (p) {
+      var have = {};
+      readAll_(ctx.sheets[p[0]]).forEach(function (r) { if (r.id) have[String(r.id)] = true; });
+      var n = 0;
+      data[p[1]].forEach(function (row) {
+        if (have[row.id]) return;
+        if (p[0] === 'EMPLOYEES' && emails[row.email.toLowerCase()]) return;
+        appendRow_(ctx.sheets[p[0]], row, DEFAULT_CONFIG.HEADERS[p[0]]);
+        n++;
+      });
+      added[p[1]] = n;
+    });
+    return added;
   } finally {
     lock.releaseLock();
   }
 }
 
-// Clears the rows of exactly three sheets named by `ctx` (Employees, Tasks,
-// WorkSessions in the real context) and re-seeds them. It never deletes a
-// sheet and never touches any other sheet or spreadsheet.
+// Clears the rows of the application sheets named by `ctx` and seeds the
+// scenario again. It never deletes a sheet and never touches any other sheet or
+// spreadsheet.
 function demo_reset_(ctx) {
   ctx = ctx || getContext_();
   setupSheets_(ctx);
@@ -105,22 +110,35 @@ function demo_reset_(ctx) {
         sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
       }
     });
-    return demo_seed_(ctx);
   } finally {
     lock.releaseLock();
   }
+  return assessment_seed_(ctx, Date.now());
 }
 
-// OWNER-ONLY. Restores the demonstration to its known initial state. Arm it
-// first (see adminOnly_), then run it from the Apps Script editor.
+// OWNER-ONLY and non-destructive. Arm with ADMIN_MODE=seedAssessmentData, run it
+// from the Apps Script editor: it adds whatever part of the scenario is missing.
+function seedAssessmentData() {
+  adminOnly_('seedAssessmentData');
+  if (!DEMO_CONFIG.ENABLED || !demo_environmentOk_()) {
+    throw new Error('Refusing to seed: this is not the dedicated assessment spreadsheet.');
+  }
+  var ctx = getContext_();
+  setupSheets_(ctx);
+  var added = assessment_seed_(ctx, Date.now());
+  Logger.log('seedAssessmentData: added ' + JSON.stringify(added));
+  return added;
+}
+
+// OWNER-ONLY and DESTRUCTIVE: replaces ALL rows of the application sheets with
+// the scenario. Arm with ADMIN_MODE=resetDemoData, then run from the editor.
 function resetDemoData() {
   adminOnly_('resetDemoData');
   if (!DEMO_CONFIG.ENABLED || !demo_environmentOk_()) {
-    throw new Error('Refusing to reset: this is not a verified demonstration spreadsheet.');
+    throw new Error('Refusing to reset: this is not the dedicated assessment spreadsheet.');
   }
   var counts = demo_reset_(getContext_());
-  Logger.log('resetDemoData: restored ' + counts.employees + ' employees, ' + counts.tasks +
-    ' tasks, ' + counts.sessions + ' sessions.');
+  Logger.log('resetDemoData: restored ' + JSON.stringify(counts));
   return counts;
 }
 
@@ -159,7 +177,7 @@ function demo_cleanup_(ctx) {
 function cleanupTestArtifacts() {
   adminOnly_('cleanupTestArtifacts');
   if (!DEMO_CONFIG.ENABLED || !demo_environmentOk_()) {
-    throw new Error('Refusing to clean up: this is not a verified demonstration spreadsheet.');
+    throw new Error('Refusing to clean up: this is not the dedicated assessment spreadsheet.');
   }
   var removed = demo_cleanup_(getContext_());
   Logger.log('cleanupTestArtifacts: removed ' + JSON.stringify(removed));

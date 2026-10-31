@@ -43,7 +43,7 @@ const fns = topLevelFunctions();
 const publicNames = Object.keys(fns).filter(n => !n.endsWith('_'));
 
 const API = [
-  'api_listEmployees', 'api_createEmployee', 'api_loadDemoSample', 'api_getEmployeeDetails',
+  'api_listEmployees', 'api_createEmployee', 'api_getEmployeeDetails',
   'api_assignTask', 'api_rotateWorkspaceToken', 'api_generateReport', 'api_getEmployeeState',
   'api_startSession', 'api_pauseSession', 'api_resumeSession', 'api_finishTask',
   'api_resendInvitation', 'api_getAppInfo', 'api_getDashboard', 'api_exportReportCsv',
@@ -51,8 +51,8 @@ const API = [
   'api_assignTaskToEmployee', 'api_updateTask', 'api_getTaskDetails', 'api_addManagerComment',
   'api_listAvailableTasks', 'api_claimTask', 'api_listMyComments', 'api_addComment'
 ];
-const OWNER_ONLY = ['runTests', 'resetDemoData', 'cleanupTestArtifacts', 'enableOpenAccess', 'disableOpenAccess'];
-const PURE = Object.keys(fns).filter(n => (fns[n].file === 'pure.gs' || fns[n].file === 'i18n.gs') && !n.endsWith('_'));
+const OWNER_ONLY = ['runTests', 'resetDemoData', 'seedAssessmentData', 'cleanupTestArtifacts', 'enableOpenAccess', 'disableOpenAccess'];
+const PURE = Object.keys(fns).filter(n => (fns[n].file === 'pure.gs' || fns[n].file === 'i18n.gs' || fns[n].file === 'dataset.gs') && !n.endsWith('_'));
 
 test('surface: every .gs file parses', () => {
   gsFiles.forEach(f => new vm.Script(read(f), { filename: f }));
@@ -255,7 +255,7 @@ test('access: pages call only the APIs that belong to them', () => {
   const names = src => Array.from(new Set((src.match(/'(api_\w+)'/g) || []).map(x => x.slice(1, -1))));
   const emp = names(read2('employee_js.html'));
   const mgr = names(read2('manager_js.html'));
-  assert(emp.length >= 8 && mgr.length >= 20, 'found calls');
+  assert(emp.length >= 8 && mgr.length >= 19, 'found calls');
   emp.forEach(n => assert(EMPLOYEE_API.indexOf(n) >= 0, 'employee page calls ' + n));
   mgr.forEach(n => assert(API.indexOf(n) >= 0 && EMPLOYEE_API.indexOf(n) < 0, 'manager page calls ' + n));
   assert(!/employeeId/.test(read2('employee_js.html')), 'employee page never handles an employee id');

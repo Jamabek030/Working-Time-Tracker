@@ -173,93 +173,9 @@ function isDemoEnvironmentName(name) {
 // Caps how much an anonymous audience can write into the demo spreadsheet.
 function checkRowLimit(currentRows, limit, label) {
   if (limit > 0 && currentRows >= limit) {
-    throw UserError('Demo limit reached: at most ' + limit + ' ' + label +
-      ' can be stored. Ask the maintainer to reset the demo data.');
+    throw UserError('Storage limit reached: at most ' + limit + ' ' + label +
+      ' can be stored. Contact the administrator.');
   }
-}
-
-// Fictional sample dataset for the public demonstration. Pure: ids and tokens
-// are injected so Node can test the invariants (no overlapping sessions,
-// durationMs == end - start, exactly one active task per sample employee, only
-// reserved example.com addresses, every task/comment/activity row points at an
-// existing parent). Every session lies on a whole past day relative to `nowMs`,
-// so no session is ever "running"; due dates are relative to today so the
-// overdue indicator can be seen.
-function buildDemoSample(nowMs, newId, newToken) {
-  var DAY = 86400000;
-  var midnight = nowMs - (nowMs % DAY);
-  function at(daysAgo, hour, minute) {
-    return new Date(midnight - daysAgo * DAY + (hour * 60 + minute) * 60000).toISOString();
-  }
-  function ymd(daysFromToday) { return ymdUtc(midnight + daysFromToday * DAY); }
-  var projects = [], employees = [], tasks = [], sessions = [], comments = [], activity = [];
-
-  function addProject(name, description, createdDaysAgo) {
-    var p = { id: newId(), name: name, description: description, status: 'active', createdAt: at(createdDaysAgo, 8, 0) };
-    projects.push(p);
-    return p;
-  }
-  function addEmployee(last, first, middle, email, createdDaysAgo) {
-    var e = { id: newId(), lastName: last, firstName: first, middleName: middle, email: email,
-      workspaceToken: newToken(), createdAt: at(createdDaysAgo, 8, 0), active: true };
-    employees.push(e);
-    return e;
-  }
-  function logActivity(task, when, actorType, actorId, action, detail) {
-    activity.push({ id: newId(), taskId: task.id, at: when, actorType: actorType, actorId: actorId || '', action: action, detail: detail || '' });
-  }
-  function addTask(emp, project, title, status, createdAt, completedAt, o) {
-    o = o || {};
-    var t = { id: newId(), employeeId: emp ? emp.id : '', title: title, status: status, createdAt: createdAt,
-      completedAt: completedAt || '', projectId: project ? project.id : '', priority: o.priority || 'medium',
-      dueDate: o.due || '', description: o.description || '', assignedAt: emp ? createdAt : '' };
-    tasks.push(t);
-    logActivity(t, createdAt, 'manager', '', 'created', t.priority);
-    if (status === 'available') logActivity(t, createdAt, 'manager', '', 'published', '');
-    if (emp) logActivity(t, createdAt, 'manager', '', 'assigned', emp.firstName + ' ' + emp.lastName);
-    if (status === 'completed') logActivity(t, completedAt, 'employee', emp.id, 'completed', '');
-    return t;
-  }
-  function addSession(emp, task, start, end, status) {
-    sessions.push({ id: newId(), employeeId: emp.id, taskId: task.id, startTime: start, endTime: end,
-      durationMs: new Date(end).getTime() - new Date(start).getTime(), status: status });
-    logActivity(task, start, 'employee', emp.id, 'started', '');
-    logActivity(task, end, 'employee', emp.id, status === 'completed' ? 'completed' : 'paused', '');
-  }
-  function addComment(task, authorType, emp, text, when) {
-    comments.push({ id: newId(), taskId: task.id, authorType: authorType, authorId: emp ? emp.id : '',
-      authorName: emp ? emp.firstName + ' ' + emp.lastName : '', text: text, createdAt: when });
-  }
-
-  var backend = addProject('Backend', 'API and database work', 9);
-  var frontend = addProject('Frontend', 'Web interface', 9);
-  var qa = addProject('QA', 'Testing and quality', 9);
-
-  var alex = addEmployee('Rivera', 'Alex', '', 'alex.rivera@example.com', 6);
-  var a1 = addTask(alex, frontend, 'Draft onboarding checklist', 'replaced', at(6, 8, 0), at(4, 17, 0), { priority: 'medium' });
-  addSession(alex, a1, at(6, 9, 0), at(6, 10, 30), 'paused');
-  addSession(alex, a1, at(5, 9, 15), at(5, 11, 45), 'paused');
-  addSession(alex, a1, at(4, 13, 0), at(4, 13, 40), 'paused');
-  var a2 = addTask(alex, qa, 'Review test plan', 'active', at(4, 17, 0), '', { priority: 'high', due: ymd(2), description: 'Check coverage of the timer scenarios and note gaps.' });
-  addSession(alex, a2, at(3, 10, 0), at(3, 12, 0), 'paused');
-  addSession(alex, a2, at(1, 14, 0), at(1, 15, 30), 'paused');
-  addComment(a2, 'manager', null, 'Please attach the test results when you finish.', at(2, 10, 0));
-  addComment(a2, 'employee', alex, 'Will do. The second pass is planned for Friday.', at(2, 11, 30));
-
-  var sam = addEmployee('Nguyen', 'Sam', 'Q', 'sam.nguyen@example.com', 8);
-  var b1 = addTask(sam, frontend, 'Prototype report filters', 'completed', at(8, 8, 0), at(7, 10, 0), { priority: 'medium', due: ymd(-6) });
-  addSession(sam, b1, at(8, 9, 0), at(8, 11, 0), 'paused');
-  addSession(sam, b1, at(7, 9, 0), at(7, 10, 0), 'completed');
-  var b2 = addTask(sam, frontend, 'Write demo walkthrough', 'active', at(7, 10, 30), '', { priority: 'medium', due: ymd(-1), description: 'Short step-by-step script for reviewers.' });
-  addSession(sam, b2, at(2, 11, 0), at(2, 11, 45), 'paused');
-  addComment(b2, 'employee', sam, 'Waiting for the walkthrough script to be approved.', at(1, 9, 0));
-
-  addTask(null, backend, 'Optimize database queries', 'available', at(3, 9, 0), '', { priority: 'high', due: ymd(5), description: 'Profile the slowest report queries and propose indexes.' });
-  addTask(null, backend, 'Write unit tests for the new API methods', 'available', at(3, 9, 5), '', { priority: 'medium', due: ymd(3), description: 'Cover validation and error paths.' });
-  addTask(null, frontend, 'Prepare the design presentation', 'available', at(2, 15, 0), '', { priority: 'low', description: 'Slides for the next interface review.' });
-  addTask(null, qa, 'Review email templates', 'draft', at(1, 16, 0), '', { priority: 'medium', due: ymd(7) });
-
-  return { projects: projects, employees: employees, tasks: tasks, sessions: sessions, comments: comments, activity: activity };
 }
 
 // --- work state, analytics, CSV, invitations (all pure) ----------------------
@@ -541,7 +457,6 @@ if (typeof module !== 'undefined' && module.exports) {
     UserError: UserError,
     isDemoEnvironmentName: isDemoEnvironmentName,
     checkRowLimit: checkRowLimit,
-    buildDemoSample: buildDemoSample,
     TASK_PRIORITIES: TASK_PRIORITIES,
     TASK_TRANSITIONS: TASK_TRANSITIONS,
     normalizePriority: normalizePriority,

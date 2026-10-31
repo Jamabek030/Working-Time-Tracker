@@ -45,9 +45,11 @@ function runTests() {
     test_sumSessionMsFallsBackToTimestamps_,
     test_ensureSheetRefusesToOverwriteDataWithBlankHeaders_,
     test_demoResetClearsOnlyTargetSheets_,
-    test_demoSampleLoadsOnlyIntoEmptyDemo_,
-    test_demoSampleReportsMatchSessions_,
-    test_demoSampleKeepsTaskHistory_,
+    test_assessmentSeedIsIdempotent_,
+    test_assessmentSeedKeepsUnrelatedRows_,
+    test_assessmentPoolHasTwentyAvailableTasks_,
+    test_assessmentReportsMatchSessions_,
+    test_assessmentKeepsTaskHistory_,
     test_emailKillSwitchStopsAllSending_,
     test_adminFunctionsRefuseWhenNotArmed_,
     test_adminArmingIsConsumedOnUse_,
@@ -409,16 +411,49 @@ function test_demoResetClearsOnlyTargetSheets_() {
   }
 }
 
-function test_demoSampleLoadsOnlyIntoEmptyDemo_() {
-  var first = demo_loadSampleIfEmpty_(TEST_CTX);
-  assert_(first.employees >= 2, 'sample created employees');
-  var err = assertThrows_(function () { demo_loadSampleIfEmpty_(TEST_CTX); }, 'second load must be refused');
-  assert_(err.userSafe === true, 'refusal is a user-facing message');
-  assertEq_(employees_list_(TEST_CTX).length, first.employees, 'nothing appended by the refused call');
+function test_assessmentSeedIsIdempotent_() {
+  var first = assessment_seed_(TEST_CTX, Date.now());
+  assertEq_([first.projects, first.employees, first.tasks, first.sessions, first.comments, first.activity].join(','), '5,10,48,62,12,236', 'rows added on an empty workbook');
+  var again = assessment_seed_(TEST_CTX, Date.now());
+  assertEq_([again.projects, again.employees, again.tasks, again.sessions, again.comments, again.activity].join(','), '0,0,0,0,0,0', 'a second run adds nothing');
+  assertEq_(employees_list_(TEST_CTX).length, 10, 'ten employees, no duplicates');
+  assertEq_(tasks_list_(TEST_CTX).length, 48);
+  assertEq_(sessions_list_(TEST_CTX).length, 62);
 }
 
-function test_demoSampleReportsMatchSessions_() {
-  demo_seed_(TEST_CTX);
+function test_assessmentSeedKeepsUnrelatedRows_() {
+  var mine = newPerson_('qa.unrelated@corp-demo.io');
+  var squatter = employees_create_({ lastName: 'Other', firstName: 'Person', email: 'marina.volkova@example.com', initialTask: 'Own task' }, TEST_CTX);
+  var added = assessment_seed_(TEST_CTX, Date.now());
+  assertEq_(added.employees, 9, 'an address that already exists is not added twice');
+  assertEq_(employees_list_(TEST_CTX).length, 11);
+  assertEq_(employees_findById_(mine.id, TEST_CTX).email, 'qa.unrelated@corp-demo.io', 'unrelated record untouched');
+  assertEq_(employees_findById_(squatter.id, TEST_CTX).lastName, 'Other', 'existing record with a dataset address untouched');
+  assertEq_(employees_list_(TEST_CTX).filter(function (e) { return e.email === 'marina.volkova@example.com'; }).length, 1);
+}
+
+function test_assessmentPoolHasTwentyAvailableTasks_() {
+  assessment_seed_(TEST_CTX, Date.now());
+  var pool = tasks_list_(TEST_CTX).filter(function (t) { return t.status === 'available'; });
+  assertEq_(pool.length, 20, 'exactly twenty tasks in the shared pool');
+  var titles = {};
+  pool.forEach(function (t) {
+    assertEq_(t.employeeId, '', 'pool task has no owner');
+    assert_(/[\u0400-\u04FF]/.test(t.title), 'Russian title: ' + t.title);
+    assert_(t.projectId && projects_findById_(t.projectId, TEST_CTX), 'linked to an existing project');
+    assert_(t.description.indexOf('Ожидаемый результат:') >= 0, 'completion criterion in the description');
+    titles[t.title] = true;
+  });
+  assertEq_(Object.keys(titles).length, 20, 'titles are distinct');
+  var emp = employees_list_(TEST_CTX)[0];
+  var claimed = tasks_claim_(pool[0].id, emp, TEST_CTX);
+  assertEq_([claimed.status, claimed.employeeId].join('|'), 'active|' + emp.id, 'an employee can take a pool task');
+  assertThrows_(function () { tasks_claim_(pool[0].id, employees_list_(TEST_CTX)[1], TEST_CTX); }, 'a taken task cannot be taken again');
+  assertEq_(tasks_list_(TEST_CTX).filter(function (t) { return t.status === 'available'; }).length, 19);
+}
+
+function test_assessmentReportsMatchSessions_() {
+  assessment_seed_(TEST_CTX, Date.now());
   var sessions = sessions_list_(TEST_CTX);
   var expected = 0;
   sessions.forEach(function (s) { expected += s.durationMs; });
@@ -429,14 +464,14 @@ function test_demoSampleReportsMatchSessions_() {
   assertEq_(reports_generate_('2000-01-01', '2000-01-02', TEST_CTX).length, 0, 'empty range -> empty report');
 }
 
-function test_demoSampleKeepsTaskHistory_() {
-  demo_seed_(TEST_CTX);
-  var alex = employees_list_(TEST_CTX).filter(function (e) { return e.firstName === 'Alex'; })[0];
-  var before = tasks_forEmployee_(alex.id, TEST_CTX).length;
-  var sessionsBefore = sessions_forEmployee_(alex.id, TEST_CTX).length;
-  employees_assignTask_(alex.id, 'Brand new task', TEST_CTX);
-  assertEq_(tasks_forEmployee_(alex.id, TEST_CTX).length, before + 1, 'task appended, none removed');
-  assertEq_(sessions_forEmployee_(alex.id, TEST_CTX).length, sessionsBefore, 'sessions preserved');
+function test_assessmentKeepsTaskHistory_() {
+  assessment_seed_(TEST_CTX, Date.now());
+  var person = employees_list_(TEST_CTX).filter(function (e) { return e.lastName === 'Волкова'; })[0];
+  var before = tasks_forEmployee_(person.id, TEST_CTX).length;
+  var sessionsBefore = sessions_forEmployee_(person.id, TEST_CTX).length;
+  employees_assignTask_(person.id, 'Brand new task', TEST_CTX);
+  assertEq_(tasks_forEmployee_(person.id, TEST_CTX).length, before + 1, 'task appended, none removed');
+  assertEq_(sessions_forEmployee_(person.id, TEST_CTX).length, sessionsBefore, 'sessions preserved');
 }
 
 function test_emailKillSwitchStopsAllSending_() {
@@ -581,9 +616,9 @@ function test_inviteTextCannotInjectHeadersOrLines_() {
 }
 
 function test_dashboardAgreesWithReports_() {
-  demo_seed_(TEST_CTX);
+  assessment_seed_(TEST_CTX, Date.now());
   var now = Date.now();
-  var from = ymdUtc(now - 10 * 86400000), to = ymdUtc(now);
+  var from = ymdUtc(now - 30 * 86400000), to = ymdUtc(now);
   var d = dashboard_get_(from, to, TEST_CTX);
   var rows = reports_generate_(from, to, TEST_CTX);
   var reportTotal = 0;
@@ -592,11 +627,11 @@ function test_dashboardAgreesWithReports_() {
   var dailyTotal = 0;
   d.daily.forEach(function (x) { dailyTotal += x.ms; });
   assertEq_(dailyTotal, reportTotal, 'daily buckets sum to the same total');
-  assertEq_(d.daily.length, 11, 'one bucket per UTC day');
+  assertEq_(d.daily.length, 31, 'one bucket per UTC day');
   var byEmp = 0;
   d.byEmployee.forEach(function (x) { byEmp += x.ms; });
   assertEq_(byEmp, reportTotal, 'by-employee rows sum to the same total');
-  assertEq_([d.metrics.totalEmployees, d.metrics.activeTasks, d.metrics.completedTasks, d.metrics.working, d.metrics.paused].join(','), '2,2,1,0,2');
+  assertEq_([d.metrics.totalEmployees, d.metrics.activeTasks, d.metrics.completedTasks, d.metrics.working, d.metrics.paused, d.metrics.idle].join(','), '10,12,14,0,8,2');
   var empty = dashboard_get_('2000-01-01', '2000-01-03', TEST_CTX);
   assertEq_(empty.metrics.trackedMs, 0, 'empty period');
   assertEq_(empty.daily.length, 3);
@@ -615,12 +650,12 @@ function test_dashboardWorkingAndPausedStates_() {
 }
 
 function test_csvExportMatchesReportAndNeutralisesFormulas_() {
-  demo_seed_(TEST_CTX);
+  assessment_seed_(TEST_CTX, Date.now());
   var evil = employees_create_({ lastName: '=1+1', firstName: '@SUM(A1)', email: 'qa.csv@corp-demo.io', initialTask: '-cmd|calc' }, TEST_CTX);
   var task = tasks_getActive_(evil.id, TEST_CTX);
   var s = new Date(Date.now() - 3600000).toISOString(), e = new Date(Date.now() - 1800000).toISOString();
   appendRow_(TEST_CTX.sheets.SESSIONS, { id: uuid_(), employeeId: evil.id, taskId: task.id, startTime: s, endTime: e, durationMs: 1800000, status: 'paused' }, DEFAULT_CONFIG.HEADERS.SESSIONS);
-  var from = ymdUtc(Date.now() - 10 * 86400000), to = ymdUtc(Date.now());
+  var from = ymdUtc(Date.now() - 30 * 86400000), to = ymdUtc(Date.now());
   var res = reports_csv_(from, to, '', 'ru', TEST_CTX);
   var rows = reports_generate_(from, to, TEST_CTX);
   var n = 0;
@@ -823,17 +858,17 @@ function test_commentsAreOwnedAppendOnlyAndVisibleToTheManager_() {
 }
 
 function test_dashboardStatusCountsAndProjectTimeReconcile_() {
-  demo_seed_(TEST_CTX);
+  assessment_seed_(TEST_CTX, Date.now());
   var now = Date.now();
-  var from = ymdUtc(now - 10 * 86400000), to = ymdUtc(now);
+  var from = ymdUtc(now - 30 * 86400000), to = ymdUtc(now);
   var d = dashboard_get_(from, to, TEST_CTX);
   var m = d.metrics, c = m.tasksByStatus;
   var sum = 0;
   Object.keys(c).forEach(function (k) { sum += c[k]; });
   assertEq_(sum, m.totalTasks, 'status buckets add up to the number of tasks');
   assertEq_(m.totalTasks, tasks_list_(TEST_CTX).length, 'and to the task rows');
-  assertEq_([c.draft, c.available, c.paused, c.completed, c.replaced].join(','), '1,3,2,1,1', 'sample distribution');
-  assertEq_(m.overdueTasks, 1, 'one overdue task in the sample');
+  assertEq_([c.draft, c.available, c.assigned, c.in_progress, c.paused, c.completed, c.replaced].join(','), '2,20,4,0,8,14,0', 'scenario distribution');
+  assertEq_(m.overdueTasks, 2, 'two overdue tasks in the scenario');
   var byProject = 0;
   d.byProject.forEach(function (p) { byProject += p.ms; });
   assertEq_(byProject, m.trackedMs, 'time by project adds up to the tracked time');

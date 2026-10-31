@@ -96,7 +96,7 @@ test('every UserError message literal in the server code maps to a translatable 
   });
   assert(msgs.length >= 20, 'found ' + msgs.length);
   msgs.forEach(({ f, text, dynamic }) => {
-    if (dynamic) text = text.replace(/ \(max $/, ' (max 366 days).').replace(/^Demo limit reached: at most $/, 'Demo limit reached: at most 5 x can be stored. ');
+    if (dynamic) text = text.replace(/ \(max $/, ' (max 366 days).').replace(/^Storage limit reached: at most $/, 'Storage limit reached: at most 5 x can be stored. ');
     const c = g.errorCodeFor(dynamic && /^Date range/.test(text) ? 'Date range is too long (max 366 days).' : text);
     assert(c, f + ': no code for message: ' + text);
     assert(('err.' + c.code) in en && ('err.' + c.code) in ru, 'no translation for err.' + c.code);
@@ -105,7 +105,7 @@ test('every UserError message literal in the server code maps to a translatable 
 test('dynamic messages map to codes with parameters', () => {
   assertEq(g.errorCodeFor('Last name is too long (max 100 characters).'), { code: 'too_long', params: { field: 'lastName', limit: '100' } });
   assertEq(g.errorCodeFor('Task title is too long (max 500 characters).').params.field, 'taskTitle');
-  assertEq(g.errorCodeFor('Demo limit reached: at most 100 Employees can be stored. Ask the maintainer to reset the demo data.').params, { limit: '100', what: 'Employees' });
+  assertEq(g.errorCodeFor('Storage limit reached: at most 100 Employees can be stored. Contact the administrator.').params, { limit: '100', what: 'Employees' });
   assertEq(g.errorCodeFor('Date range is too long (max 366 days).').params, { limit: '366' });
   assertEq(g.errorCodeFor('totally unknown'), null);
 });
