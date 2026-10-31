@@ -80,13 +80,13 @@ function createEnv(opts) {
   const other = new FakeSpreadsheet('Payroll 2026 (unrelated)', 'SIM-OTHER-ID');
   const props = new Map();
   if (opts.pin !== false) props.set('SPREADSHEET_ID', ss.id);
-  const log = { logger: [], mail: [], opened: [], propWrites: [], lockEvents: [] };
+  const log = { logger: [], mail: [], errors: [], opened: [], propWrites: [], lockEvents: [] };
   const cacheStore = new Map();
   let lockHeld = false;
   let externalLock = false; // simulates another execution holding the script lock
 
   const sandbox = {
-    console: { error() {}, log() {} },
+    console: { error: m => log.errors.push(String(m)), log() {} },
     Logger: { log: m => log.logger.push(String(m)) },
     Utilities: { getUuid: () => crypto.randomUUID() },
     MailApp: {

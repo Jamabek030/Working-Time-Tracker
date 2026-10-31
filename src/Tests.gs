@@ -89,6 +89,8 @@ function runTests() {
 
   var results = [];
   var startedAt = Date.now();
+  mailBlockedForTests_ = true;
+  try {
   for (var i = 0; i < tests.length; i++) {
     var t = tests[i];
     var name = t.name || ('test_' + i);
@@ -110,6 +112,9 @@ function runTests() {
       results.push({ name: name, ok: false, error: msg });
       Logger.log('FAIL ' + name + ' -- ' + msg);
     }
+  }
+  } finally {
+    mailBlockedForTests_ = false;
   }
 
   var passed = 0;
@@ -547,12 +552,20 @@ function test_validationMessagesAreUserSafe_() {
 // --- invitations, dashboard, CSV, cleanup (no real mail is ever sent: every test
 //     that reaches the delivery step installs the mailSender_ test double) ------
 
+// The message of the failure the double simulates. It is marked SIMULATED so the
+// execution log line "invitation send failed: SIMULATED ..." that the production
+// code writes for it can never be mistaken for a real mail-quota error.
+var SIMULATED_MAIL_FAILURE_ = 'SIMULATED (test double): Service invoked too many times for one day: email.';
+
 function withMailDouble_(fn, behaviour) {
   var sent = [];
   mailSender_ = function (msg) {
-    if (behaviour === 'throw') throw new Error('Service invoked too many times for one day: email.');
+    if (behaviour === 'throw') throw new Error(SIMULATED_MAIL_FAILURE_);
     sent.push(msg);
   };
+  if (behaviour === 'throw') {
+    Logger.log('NOTE: the "invitation send failed: SIMULATED ..." error line that follows is the failure this test simulates on purpose; the mail service is not called.');
+  }
   try { fn(sent); } finally { mailSender_ = null; }
 }
 
@@ -586,6 +599,8 @@ function test_inviteFailureKeepsEmployeeAndCanBeRetried_() {
   }, 'throw');
   assertEq_(employees_findById_(emp.id, TEST_CTX).email, 'qa.retry@corp-demo.io', 'employee record preserved');
   assertEq_(invites_latestByEmployee_(TEST_CTX)[emp.id].status, 'failed');
+  var failedRow = invites_list_(TEST_CTX).filter(function (r) { return r.status === 'failed'; })[0];
+  assert_(failedRow && failedRow.detail.indexOf('SIMULATED') === 0, 'the recorded failure is the simulated one');
   assertEq_(JSON.stringify(invites_list_(TEST_CTX)).indexOf(emp.workspaceToken), -1, 'no token in the failure detail');
   withMailDouble_(function (sent) {
     assertEq_(email_sendInvitation_(emp, 'T', 'en', TEST_CTX).status, 'sent', 'retry succeeds');

@@ -190,6 +190,18 @@ test('surface: invitation log never receives the token or the plain address', ()
   assert(body.length > 0);
 });
 
+test('mail: every invitation call in the integration tests runs inside the mail test double (no real send is reachable)', () => {
+  const src = read('Tests.gs');
+  const funcs = src.split('\nfunction ').slice(1);
+  const offenders = funcs
+    .filter(f => f.indexOf('email_sendInvitation_(') >= 0 && f.indexOf('withMailDouble_(') < 0 && f.indexOf('withMailDouble_') !== 0)
+    .map(f => f.slice(0, f.indexOf('(')));
+  assertEq(offenders, []);
+  const email = read('Email.gs');
+  assert(email.indexOf("if (mailBlockedForTests_) throw new Error('Real mail refused") >= 0, 'delivery refuses real mail while tests run');
+  assert(src.indexOf('mailBlockedForTests_ = true;') >= 0 && src.indexOf('mailBlockedForTests_ = false;') >= 0, 'runTests sets and clears the block');
+});
+
 test('surface: client code never builds HTML from data', () => {
   ['manager_js.html', 'employee_js.html', 'i18n_js.html'].forEach(f => {
     const src = fs.readFileSync(path.join(srcDir, f), 'utf8');

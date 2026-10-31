@@ -20,8 +20,14 @@
 // Tests.gs) set it so no real message is ever sent from an automated test.
 var mailSender_ = null;
 
+// True only while runTests runs (set and cleared by runTests). In that window a
+// delivery without the test double is refused instead of reaching MailApp, so a
+// test that forgets the double fails loudly rather than mailing someone.
+var mailBlockedForTests_ = false;
+
 function email_deliver_(msg) {
   if (mailSender_) { mailSender_(msg); return; }
+  if (mailBlockedForTests_) throw new Error('Real mail refused: tests must install the mailSender_ test double.');
   MailApp.sendEmail(msg);
 }
 
@@ -33,6 +39,7 @@ function email_enabled_() {
 function email_capability_() {
   if (!email_enabled_()) return { enabled: false, available: false, remaining: 0 };
   if (mailSender_) return { enabled: true, available: true, remaining: DEMO_CONFIG.EMAIL.DAILY_LIMIT };
+  if (mailBlockedForTests_) return { enabled: true, available: false, remaining: 0 };
   try {
     return { enabled: true, available: true, remaining: MailApp.getRemainingDailyQuota() };
   } catch (err) {

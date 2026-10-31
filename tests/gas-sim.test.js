@@ -530,6 +530,45 @@ test('sim: when the time budget is used up the remaining tests are reported as N
   assertEq(res.total, EXPECTED_INTEGRATION_TESTS);
 });
 
+// --- the real runTests log showed "invitation send failed: Service invoked too many
+// times for one day: email." although all 53 tests passed. Origin: the failure-path
+// test's DOUBLE throws that text on purpose (Tests.gs withMailDouble_ 'throw'), and
+// email_sendInvitation_ logs every failed delivery with console.error (Email.gs).
+// MailApp.sendEmail is never reached. These tests pin that, make the simulated
+// failure unmistakable, and make a real send during runTests impossible.
+test('sim: the only "invitation send failed" line a runTests run produces is the SIMULATED one, and no mail is sent', () => {
+  const env = createEnv(); env.arm('runTests');
+  env.ctx.runTests();
+  const lines = env.log.errors.filter(l => /invitation send failed/.test(l));
+  assertEq(lines.length, 1, 'exactly one failure-path log line: ' + JSON.stringify(lines));
+  assert(/invitation send failed: SIMULATED \(test double\)/.test(lines[0]), lines[0]);
+  assertEq(env.log.mail.length, 0, 'the simulated MailApp was never called');
+  assert(env.log.logger.some(l => /the failure this test simulates on purpose/.test(l)), 'the log explains the expected error line');
+});
+
+test('sim: while runTests runs a delivery without the test double is refused, not sent; production behaviour is unchanged outside it', () => {
+  const env = createEnv();
+  assertEq(env.ctx.mailBlockedForTests_, false, 'off by default');
+  env.ctx.email_deliver_({ to: 'someone@corp.example.org', subject: 's', body: 'b' });
+  assertEq(env.log.mail.length, 1, 'outside runTests the real path (simulated MailApp) still delivers');
+  env.ctx.mailBlockedForTests_ = true;
+  const msg = throwsMsg(() => env.ctx.email_deliver_({ to: 'someone@corp.example.org', subject: 's', body: 'b' }));
+  assert(/Real mail refused/.test(msg), msg);
+  assertEq(env.log.mail.length, 1, 'nothing more was sent');
+  assertEq(env.ctx.email_capability_().available, false, 'the quota probe is not called either');
+});
+
+test('sim: runTests always clears the mail block, even when a test fails or the run is cut by the time budget', () => {
+  const a = createEnv(); a.arm('runTests'); a.ctx.runTests();
+  assertEq(a.ctx.mailBlockedForTests_, false);
+  const b = createEnv(); b.arm('runTests'); b.ctx.TEST_TIME_BUDGET_MS = -1; b.ctx.runTests();
+  assertEq(b.ctx.mailBlockedForTests_, false);
+  const c = createEnv(); c.arm('runTests');
+  c.ctx.resetTestSheets_ = () => { throw new Error('boom'); };
+  c.ctx.runTests();
+  assertEq(c.ctx.mailBlockedForTests_, false);
+});
+
 test('sim: row caps stop anonymous growth with an understandable message', () => {
   const env = createEnv();
   env.ctx.DEMO_CONFIG.LIMITS.EMPLOYEES = 2;
