@@ -3,10 +3,13 @@
 //
 //   SHEET_ID=<demo spreadsheet id> node tests/live/accept.js <exec url>
 //
-// It creates clearly fictional records that the owner-armed cleanupTestArtifacts()
-// function can remove again: employees demo.verifier.<digits>@example.com and a
-// project named "Acceptance project <digits>" with its tasks. It never sends
-// email: every address ends in @example.com, which the app never mails.
+// WRITE phase of the live acceptance: it exercises the create / claim / assign /
+// timer / comment / report workflows. It creates records that the owner-armed
+// cleanupTestArtifacts() function (or resetDemoData) can remove again: employees
+// demo.verifier.<digits>@example.com and a project named "Acceptance project
+// <digits>" with its tasks. It never sends email: every address ends in
+// @example.com, which the app never mails. The READ phase for the seeded
+// company dataset is tests/live/accept-data.js.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -20,6 +23,9 @@ const STAMP = Date.now();
 const EMAIL_A = 'demo.verifier.' + STAMP + '@example.com';
 const EMAIL_B = 'demo.verifier.' + (STAMP + 1) + '@example.com';
 const PROJECT = 'Acceptance project ' + STAMP;
+const FORBIDDEN = /demo|демо|fictional|вымышлен|sample data|образцов|test environment|тестов(ая|ое) (среда|окружение)|anyone with the (link|url)|dummy/i;
+// Data rows written by earlier acceptance runs ("Verifier Demo Q", "Acceptance …") are data, not interface text.
+const scrub = t => String(t).split('\n').filter(l => !/verifier|acceptance|<img|HYPERLINK/i.test(l)).join('\n');
 const results = [];
 const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '')); };
 
@@ -48,7 +54,7 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     const topUrl = await b.evalIn(page.sessionId, 'location.href');
     rec('A1 Manager opens with no Google sign-in', /script\.google\.com\/macros\/s\//.test(topUrl) && !/accounts\.google\.com/.test(topUrl), topUrl.replace(/\/s\/[^/]+/, '/s/<id>'));
     rec('A2 persistent dark sidebar with the seven sections and a profile/language block', await ev(mgr, "document.querySelectorAll('.sidebar .nav-item').length === 7 && !!document.querySelector('.sidebar .profile') && getComputedStyle(document.querySelector('.sidebar')).backgroundColor === 'rgb(11, 23, 48)'"), '');
-    rec('A3 demo banner present', await ev(mgr, "!!document.querySelector('#demo-banner') && document.querySelector('#demo-banner').textContent.length > 40"), '');
+    rec('A3 no demonstration banner, notice or footer text on the Manager screen', await ev(mgr, "!document.querySelector('#demo-banner') && !document.querySelector('.banner')") && !FORBIDDEN.test(scrub(await ev(mgr, 'document.body.innerText'))), '');
     const nav = async v => { await ev(mgr, "document.querySelector('.nav-item[data-view=" + v + "]').click()"); await sleep(900); };
     const setLang = async (h, l) => { await ev(h, "var s=document.getElementById('lang-select'); s.value='" + l + "'; s.dispatchEvent(new Event('change'))"); await sleep(500); };
 
@@ -69,6 +75,8 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
       await nav(v);
       const l = await leaks(mgr, 'ru');
       rec('B2 no English interface text left on "' + v + '" in Russian', l === '', l);
+      const txt = scrub(await ev(mgr, 'document.body.innerText'));
+      rec('B2b no demonstration wording on "' + v + '" (ru)', !FORBIDDEN.test(txt), (txt.match(FORBIDDEN) || [''])[0]);
     }
     await setLang(mgr, 'en');
     rec('B3 English restored', (await ev(mgr, "document.querySelector('.brand-name').textContent")) === 'Working Time Tracker', '');
@@ -87,7 +95,7 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     const statusOf = (h, sel, re) => until(h, `document.querySelector('${sel}').textContent`, t => re.test(t), 40000);
     await fill(mgr, '#create-form', { lastName: 'Verifier', firstName: 'Alpha', email: EMAIL_A, initialTask: 'Acceptance initial task A' });
     let st = await statusOf(mgr, '#create-status', /created|Created/);
-    rec('C1 employee A created; the example address is reported as not mailed', /Employee Verifier Alpha was created/.test(st) && /reserved example address/.test(st), st);
+    rec('C1 employee A created; the example address is reported as not mailed', /Employee Verifier Alpha was created/.test(st) && /reserved domain/.test(st), st);
     await fill(mgr, '#create-form', { lastName: 'Verifier', firstName: 'Beta', email: EMAIL_B, initialTask: 'Acceptance initial task B' });
     await statusOf(mgr, '#create-status', /Verifier Beta/);
     const rowTxt = await until(mgr, `(function(){var r=Array.from(document.querySelectorAll('#employees-table tbody tr')).find(function(r){return r.innerText.indexOf('${EMAIL_B}')>=0});return r?r.innerText.replace(/\\s+/g,' '):''})()`, t => t.length > 0);
@@ -110,8 +118,8 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     const linkB = await linkFor(EMAIL_B);
     const tokA = linkA.match(/token=([0-9a-f]{40})/)[1], tokB = linkB.match(/token=([0-9a-f]{40})/)[1];
     await ev(mgr, "Array.from(document.querySelectorAll('#details-content button')).find(function(b){return /invitation/i.test(b.textContent)}).click()");
-    const resend = await until(mgr, "document.querySelector('#invite-status') ? document.querySelector('#invite-status').textContent : ''", t => /example address/.test(t), 30000);
-    rec('C5 retrying an invitation to an example address is reported accurately (no mail)', /No email was sent because the address is a reserved example address/.test(resend), resend);
+    const resend = await until(mgr, "document.querySelector('#invite-status') ? document.querySelector('#invite-status').textContent : ''", t => /reserved domain/.test(t), 30000);
+    rec('C5 retrying an invitation to a reserved-domain address is reported accurately (no mail)', /No email was sent because the address belongs to a reserved domain that cannot receive mail/.test(resend), resend);
 
     // ---------------------------------------------------------------- D. employee search / filter
     const cnt = () => ev(mgr, "document.querySelectorAll('#employees-table tbody tr').length");
@@ -220,6 +228,8 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     // both employees see the same pool task; A claims it
     await eNav(B, 'available');
     const bSees = (await avTitles(B)).indexOf(T('pool one')) >= 0;
+    // keep a reference to B's button now: the page refreshes its pool every 60 s, so a slow run could otherwise drop the stale card before it is clicked
+    await ev(B.f, `(function(){var c=Array.from(document.querySelectorAll('#av-list .task-card')).find(function(x){return x.innerText.indexOf('${T('pool one')}')>=0});window.__stale=c?c.querySelector('button.act'):null})()`);
     const claimBtn = e => ev(e.f, `(function(){var c=Array.from(document.querySelectorAll('#av-list .task-card')).find(function(x){return x.innerText.indexOf('${T('pool one')}')>=0});if(!c)return false;c.querySelector('button.act').click();return true})()`);
     await b.send('Target.activateTarget', { targetId: A.p.targetId });
     await claimBtn(A);
@@ -235,7 +245,7 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     // B still has the stale card: a second claim must be refused by the SERVER
     await b.send('Target.activateTarget', { targetId: B.p.targetId });
     await sleep(500);
-    const staleClaim = await claimBtn(B);
+    const staleClaim = await ev(B.f, "(function(){var b=window.__stale; if(!b) return false; b.click(); return true})()");
     const refusal = await until(B.f, "document.querySelector('#status').textContent", t => /no longer available/.test(t), 30000);
     rec('G10 a second employee cannot claim the same task (server-side refusal shown in the UI)', staleClaim === true && /no longer available/.test(refusal), refusal);
     const bApi = await apiCall(B.f, 'api_claimTask', [tokB, tPool1.id]);
@@ -352,7 +362,8 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     const today = new Date().toISOString().slice(0, 10), from = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
     await nav('overview');
     await ev(mgr, `(function(){var f=document.querySelector('#dash-form');f.elements['from'].value='${from}';f.elements['to'].value='${today}';f.querySelector('button[type=submit]').click()})()`);
-    await sleep(2500);
+    await until(mgr, "document.querySelectorAll('#chart .bar-col').length", n => n === 7, 30000);
+    await sleep(500);
     const dash = await apiJson(mgr, 'api_getDashboard', [from, today]);
     const taskNow = await apiJson(mgr, 'api_listTasks', []);
     const counts = dash.metrics.tasksByStatus;
@@ -392,7 +403,7 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     const histRows = await ev(mgr, "document.querySelectorAll('#history-content tbody tr').length");
     rec('J13 Work history lists every session of the period', histRows === rep.reduce((a, r) => a + r.sessions.length, 0) && histRows > 0, 'rows=' + histRows);
     await nav('settings');
-    rec('J14 Settings shows language, mail status and demo notes', await ev(mgr, "document.querySelector('#set-email-status').textContent.length > 10 && document.querySelectorAll('#view-settings ul.plain li').length === 4"), '');
+    rec('J14 Settings shows language, mail status and the time-zone note, with no demonstration text', await ev(mgr, "document.querySelector('#set-email-status').textContent.length > 10 && /UTC/.test(document.querySelector('#view-settings').innerText) && !/demo|fictional|sample/i.test(document.querySelector('#view-settings').innerText)"), '');
 
     // ---------------------------------------------------------------- K. responsive layout
     const overflow = [];
@@ -427,12 +438,12 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
 
     // ---------------------------------------------------------------- L. security probes
     const probe = async (h, fn) => { const r = await apiCall(h, fn, []); return r; };
-    const priv = ['employees_list_', 'tasks_list_', 'tasks_claim_', 'tasks_assign_', 'tasks_move_', 'tasks_views_', 'comments_add_', 'activity_log_', 'projects_create_', 'sessions_start_', 'email_sendInvitation_', 'invites_list_', 'dashboard_get_', 'deleteRowsWhere_', 'demo_cleanup_', 'getSpreadsheet_', 'readAll_', 'appendRow_', 'updateRow_', 'setSpreadsheetId', 'adminOnly_', 'employeeFromToken_'];
+    const priv = ['employees_list_', 'tasks_list_', 'tasks_claim_', 'tasks_assign_', 'tasks_move_', 'tasks_views_', 'comments_add_', 'activity_log_', 'projects_create_', 'sessions_start_', 'email_sendInvitation_', 'invites_list_', 'dashboard_get_', 'deleteRowsWhere_', 'demo_cleanup_', 'assessment_seed_', 'demo_reset_', 'buildAssessmentDataset_', 'getSpreadsheet_', 'readAll_', 'appendRow_', 'updateRow_', 'setSpreadsheetId', 'adminOnly_', 'employeeFromToken_'];
     const bad = [];
     for (const n of priv) { const r = await probe(mgr, n); if (!/^NOCALL/.test(r)) bad.push(n + ' => ' + r.slice(0, 50)); }
     rec('L1 internal functions (task moves, comments, cleanup, spreadsheet access, …) are not callable from the client', bad.length === 0, bad.join('; ') || priv.length + ' probed');
     const adm = [];
-    for (const n of ['runTests', 'resetDemoData', 'cleanupTestArtifacts', 'enableOpenAccess', 'disableOpenAccess']) adm.push(n + ' => ' + (await probe(mgr, n)));
+    for (const n of ['runTests', 'resetDemoData', 'seedAssessmentData', 'cleanupTestArtifacts', 'enableOpenAccess', 'disableOpenAccess']) adm.push(n + ' => ' + (await probe(mgr, n)));
     rec('L2 owner-only functions refuse an anonymous caller (not armed)', adm.every(x => /ERR:.*not armed/.test(x)), adm.map(x => x.slice(0, 40)).join(' | '));
     const everything = [];
     for (const h of Array.from(b.contexts.values())) { try { everything.push(await ev(h, 'document.documentElement.outerHTML')); } catch (e) {} }
@@ -447,6 +458,7 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     const bState = JSON.stringify(await apiJson(B.f, 'api_getEmployeeState', [tokB]));
     rec('L6 an employee\'s state contains nothing of the other employee (no token, email or tasks)', !bState.includes(tokA) && !bState.includes(EMAIL_A) && bState.indexOf(T('direct A')) < 0 && bState.indexOf(T('pool one')) < 0, '');
     rec('L7 error responses carry no stack traces or file names', !/\.gs|at \w+ \(|stack/i.test(aStart + aFinish + aComment + swap + swap2 + bCom), '');
+    rec('L7b no demonstration wording on any employee or Manager screen reached in this run', !FORBIDDEN.test(scrub(await ev(A.f, 'document.body.innerText') + await ev(B.f, 'document.body.innerText') + await ev(mgr, 'document.body.innerText'))), '');
     rec('L8 no JavaScript errors were raised by any page during the run', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
   } catch (e) {
     rec('RUN ABORTED', false, e.message);

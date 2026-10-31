@@ -4,22 +4,25 @@ A web application for tracking employees' working time and distributing tasks, i
 Russian and English. Backend: Google Apps Script. Persistence: Google Sheets.
 Frontend: plain HTML, CSS and vanilla JavaScript served by `HtmlService`.
 
-> **This repository ships a public demonstration build.** It is a demonstration
-> with fictional data, **not** a production employee-management system. Anyone
-> with the URL is a manager and shares one dataset. See
-> [Public demonstration](#public-demonstration) and [Security model](#security-model).
+> **Scope.** This build runs against a dedicated assessment spreadsheet that
+> holds a fictional IT-company dataset (see [Assessment dataset](#assessment-dataset)).
+> The application screens carry no notices about this; the facts are documented
+> here instead. It is **not** a production employee-management system: the
+> Manager URL is unauthenticated and every visitor shares one dataset. See
+> [Security model](#security-model) and [Known limitations](#known-limitations).
 
 ## Contents
 
 - [Features](#features)
 - [Tasks: shared pool, assignment, states](#tasks-shared-pool-assignment-states)
 - [Time-tracking rules enforced](#time-tracking-rules-enforced)
-- [Public demonstration](#public-demonstration) — URL, workflows, configuration, deployment
+- [Assessment deployment](#assessment-deployment) — URL, workflows, configuration, deployment
+- [Assessment dataset](#assessment-dataset) — the company scenario, the 20 pool tasks, seeding
 - [Email invitations](#email-invitations)
 - [Languages](#languages-russian-and-english)
 - [Dashboard, analytics, CSV export, search](#dashboard-analytics-csv-export-search)
 - [Security model](#security-model)
-- [Demo data: reset and cleanup](#demo-data-reset-and-cleanup)
+- [Data seeding, reset and cleanup](#data-seeding-reset-and-cleanup)
 - [Architecture](#architecture-and-data-flow)
 - [Prerequisites and local setup](#prerequisites-and-local-setup)
 - [Running the tests](#running-the-tests) — results by environment
@@ -54,7 +57,7 @@ was taken from it.
   with send/retry, link rotation and the person's tasks.
 - **Reports:** date-range report (optionally for one employee) and **CSV export**.
 - **Work history:** every session of a period, filterable by employee and project.
-- **Settings:** language, mail status, notes about the demonstration.
+- **Settings:** language, mail status, time-zone note.
 
 **Employee workspace** (`<base URL>?page=employee&token=<token>`)
 
@@ -109,9 +112,9 @@ sessions: **assigned** (nothing recorded), **in progress** (a timer runs),
 - Employee creation is atomic; a failed invitation never rolls the employee back.
 - Dates are UTC calendar days everywhere (reports, dashboard, chart, CSV, task deadlines and every displayed timestamp, which carries `UTC`).
 
-## Public demonstration
+## Assessment deployment
 
-> **Public Manager URL** (deployment `AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA`, currently **version 7**):
+> **Public Manager URL** (deployment `AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA`, currently **version 8**):
 >
 > https://script.google.com/macros/s/AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA/exec
 
@@ -120,20 +123,20 @@ another user" banner; the app cannot remove it). All reviewers share one dataset
 
 ### Employee access flow
 
-1. Manager: **Employees → Add employee** (fictional data), or use an existing one.
+1. Manager: **Employees → Add employee**, or use one of the ten existing employees.
 2. Manager: **Employees → Details** shows the **workspace link**: copy it or open it
    (it works independently of email). *Send invitation* mails it to a real address.
 3. Employee: open the link → **Overview / My tasks / Available tasks / Work history / Comments**.
 4. Employee: **Available tasks → Take task** (or the Manager assigns one) → **My tasks → Start**.
 
-### Suggested demo path
+### Suggested walkthrough
 
 *Manager:* Projects → create a project → Tasks → New task → "Publish to the shared
 pool" → Employees → Details → open the workspace link. *Employee:* Available tasks
 → Take task → My tasks → Start / Pause / Finish → Comments. *Manager:* Tasks →
 Details of that task → activity history, comment thread, reply → Overview.
 
-### Configuration of the demonstration
+### Configuration
 
 | Aspect | Setting |
 | --- | --- |
@@ -163,9 +166,9 @@ clasp undeploy <probe deployment id>         # remove the throw-away deployment
 
 Never point `.clasp.json` or `SPREADSHEET_ID` at another spreadsheet and never
 run `enableOpenAccess()` (the demo build does not use it).
-Versions: 1 demo · 2 ru/en, dashboard, CSV, invitations · 3 language in the URL ·
-4 responsive tables · 5–6 sidebar UI, projects, shared task pool, comments · **7
-faster list refresh and fixes (current)**.
+Versions: 1 first deployment · 2 ru/en, dashboard, CSV, invitations · 3 language in the URL ·
+4 responsive tables · 5–6 sidebar UI, projects, shared task pool, comments · 7
+faster list refresh · **8 neutral screens (no notices), company dataset and seeding (current)**.
 
 ## Email invitations
 
@@ -228,10 +231,10 @@ The app has **no login by design**: the Manager URL is public and shared. It
 executes as its owner, so what an anonymous caller can do is exactly what the
 public code allows. `google.script.run` can call **every top-level function whose
 name does not end in `_`**, so the surface is pinned by `tests/surface.test.js`:
-`doGet`; 30 `api_*` functions (each wrapped in `safeApi_` and gated by
+`doGet`; 29 `api_*` functions (each wrapped in `safeApi_` and gated by
 `requireOpenAccess_`; none takes a sheet, spreadsheet or context argument);
-side-effect-free helpers in `pure.gs`/`i18n.gs`; and five owner-only functions
-(`runTests`, `resetDemoData`, `cleanupTestArtifacts`, `enableOpenAccess`,
+side-effect-free helpers in `pure.gs`/`i18n.gs`/`dataset.gs`; and six owner-only functions
+(`runTests`, `resetDemoData`, `seedAssessmentData`, `cleanupTestArtifacts`, `enableOpenAccess`,
 `disableOpenAccess`) that refuse unless the owner armed **that function** with
 Script Property `ADMIN_MODE=<function name>` (checked and consumed atomically under
 the lock before the operation runs). All other functions end in `_` and are not
@@ -252,36 +255,73 @@ exposed (verified live by calling 22 of them from the deployed page).
 random token identifying **one workspace**. Possession grants that workspace; it
 is not proof of who the person is, and it can be rotated. The workspace page
 renders no Manager UI and employee APIs act only on that employee's records.
-**However, the demo's Manager APIs are unauthenticated: any anonymous visitor —
+**However, this build's Manager APIs are unauthenticated: any anonymous visitor —
 including someone holding an employee link — can call them directly.** The
-workspace does not *grant* Manager access, but nothing in this demo *prevents*
+workspace does not *grant* Manager access, but nothing in this build *prevents*
 it. A real deployment needs authentication.
 
-Shared-data risks (accepted for a demo): anyone can read or change every record,
+Shared-data risks (accepted for this assessment build): anyone can read or change every record,
 including every workspace link; anonymous traffic consumes the owner's Apps
 Script and mail quotas; the app runs with the owner's permissions.
 
-## Demo data: reset and cleanup
+## Assessment dataset
 
-Both are owner-only (function-bound `ADMIN_MODE`), act only on the pinned demo
+Generated by `src/dataset.gs` (`buildAssessmentDataset`, a pure function with fixed ids `asm-…`
+and only the workspace tokens random), relative to the moment it runs, so the
+history always ends yesterday. Everything is fictional; every address is on the
+reserved `example.com` domain and no e-mail is sent when it is loaded.
+
+| Table | Rows | Content |
+| --- | --- | --- |
+| Employees | **10** | distinct Russian full names, `name.surname@example.com`; the last one joined six days earlier |
+| Projects | **5** | software development; testing and audit; administration and infrastructure; support; data, reporting and automation |
+| Tasks | **48** | **20 in the shared pool (available)**, 2 drafts, 4 assigned and not started (2 overdue), 8 started and paused, 14 completed; low / medium / high priorities and due dates; 6 were taken from the pool by employees, the rest assigned by the Manager |
+| Work sessions | **62** | five weeks of weekday work blocks, 09:00–19:15 UTC, never overlapping, none running; 127 h 50 min in total |
+| Comments | 12 | manager and employee, plain text |
+| Activity | 236 | created → published/assigned/claimed → started/paused/resumed → completed, ordered per task |
+
+### The 20 pool tasks
+
+| # | Task | Project | Priority |
+| --- | --- | --- | --- |
+| 1 | Разработать систему управления клиентами | Разработка программного обеспечения | high |
+| 2 | Создать сервис онлайн-записи на приём | Разработка программного обеспечения | high |
+| 3 | Доработать приложение управления сотрудниками | Разработка программного обеспечения | medium |
+| 4 | Разработать мобильное приложение для заявок на обслуживание | Разработка программного обеспечения | medium |
+| 5 | Реализовать систему уведомлений | Разработка программного обеспечения | medium |
+| 6 | Провести аудит платёжного приложения FinFlow | Тестирование и аудит продуктов | high |
+| 7 | Протестировать новую версию портала сотрудников WorkSpace | Тестирование и аудит продуктов | high |
+| 8 | Проверить безопасность веб-приложения ClientHub | Тестирование и аудит продуктов | high |
+| 9 | Подготовить отчёт о тестировании интернет-магазина ShopPilot | Тестирование и аудит продуктов | medium |
+| 10 | Провести аудит производительности системы аналитики ReportPro | Тестирование и аудит продуктов | medium |
+| 11 | Настроить новую среду Windows Server | Администрирование и инфраструктура | high |
+| 12 | Настроить учётные записи сотрудников и права доступа | Администрирование и инфраструктура | medium |
+| 13 | Установить и настроить внутреннее программное обеспечение компании | Администрирование и инфраструктура | medium |
+| 14 | Настроить резервное копирование файлов компании | Администрирование и инфраструктура | high |
+| 15 | Подготовить сервер разработки для нового проекта | Администрирование и инфраструктура | medium |
+| 16 | Выяснить причину медленной работы компьютера сотрудника | Сопровождение и техническая поддержка | low |
+| 17 | Обновить программы, используемые командой дизайна | Сопровождение и техническая поддержка | low |
+| 18 | Устранить проблему с доступом во внутренний портал | Сопровождение и техническая поддержка | high |
+| 19 | Подготовить управленческий отчёт для отдела продаж | Данные, отчётность и автоматизация | medium |
+| 20 | Автоматизировать еженедельный отчёт о статусе проектов | Данные, отчётность и автоматизация | medium |
+
+Each description ends with an expected result ("Ожидаемый результат: …"). The
+Windows Server task asks to confirm the exact supported release and licensing
+requirements before starting. Employees can take any of them from *Available
+tasks*; the Manager can assign any of them from the task details.
+
+## Data seeding, reset and cleanup
+
+All three are owner-only (function-bound `ADMIN_MODE`), act only on the pinned
 spreadsheet, refuse unless its title contains *test*/*demo*, and are never
 exposed to visitors. There is no automatic reset.
 
-- **`resetDemoData`** — clears and re-seeds `Employees`, `Tasks`, `WorkSessions`, `Invitations`, `Projects`, `TaskComments`, `TaskActivity` with 3 projects, 2 employees, 8 tasks (a completed one, a replaced one, two in the employees' hands, three in the shared pool, one draft; one overdue), 8 sessions, comments and an activity history. *Destructive for all demo data.*
-- **`cleanupTestArtifacts`** — removes **only** this project's own acceptance records: employees with email `demo.verifier.<digits>@example.com` or exactly `inj.verifier@example.com`, and projects named `Acceptance project <digits>`, together with their tasks, sessions, comments, activity and invitation rows. Everything else is untouched (tested, including near-miss names).
+- **`seedAssessmentData`** — *non-destructive and idempotent*: appends only the dataset rows whose fixed id (or, for employees, e-mail) is missing; running it again adds nothing; existing rows are never modified or removed (tested, including an unrelated record and a colliding e-mail).
+- **`resetDemoData`** — *destructive*: clears the rows of `Employees`, `Tasks`, `WorkSessions`, `Invitations`, `Projects`, `TaskComments`, `TaskActivity` and loads the dataset. Never deletes a sheet or touches another sheet.
+- **`cleanupTestArtifacts`** — removes **only** this project's own acceptance records: employees with e-mail `demo.verifier.<digits>@example.com` or exactly `inj.verifier@example.com`, and projects named `Acceptance project <digits>`, with their tasks, sessions, comments, activity and invitation rows (tested, including near-miss names).
 
 To run one: Project Settings → Script properties → add `ADMIN_MODE` = the function's
 name → select it in the editor → Run → read the log.
-
-**Origin of the repeated `Verifier Demo Q` records and the formula-looking
-`=HYPERLINK(...)` / `@cmd` records:** they come from this project's own live
-acceptance runs (`tests/live/accept.js` and its predecessors), which create one
-fictional employee (and, now, one project with its tasks) per run. They are shown
-as plain text and nothing executes. The newest runs' records follow the cleanup
-patterns above; the *older* `Verifier Demo Q` rows use the same email pattern. They
-have **not** been removed because removal needs the owner to arm
-`cleanupTestArtifacts`. The record *Иванов Иван Иванович* was **not** created by the
-tests (someone entered it in the public demo) and was left untouched.
 
 ## Architecture and data flow
 
@@ -340,75 +380,70 @@ Script Property `SPREADSHEET_ID` in Project Settings.
 ## Running the tests
 
 ```bash
-npm test                      # runs the six Node suites below
-node tests/pure.test.js       # also individually: analytics, tasks, i18n, surface, gas-sim
+npm test                      # runs the eight Node suites below
+node tests/pure.test.js       # also individually: analytics, tasks, i18n, dataset, wording, surface, gas-sim
 ```
 
 | Suite | What it covers |
 | --- | --- |
-| `tests/pure.test.js` | overlap maths, duration summing, validation, strict dates, `cellSafe`, `UserError`, demo helpers |
+| `tests/pure.test.js` | overlap maths, duration summing, validation, strict dates, `cellSafe`, `UserError`, storage-limit message |
 | `tests/analytics.test.js` | work-state classification, daily breakdown, CSV escaping and formula neutralisation, invitation helpers, employee search/filter |
-| `tests/tasks.test.js` | the transition table (every move, no invalid one, two claims → exactly one wins), displayed status, overdue, priorities, task filters, sample-data integrity |
+| `tests/tasks.test.js` | the transition table (every move, no invalid one, two claims → exactly one wins), displayed status, overdue, priorities, task filters |
 | `tests/i18n.test.js` | dictionary parity/coverage, language precedence and persistence (the real client runtime in a vm with a DOM stub), error codes, no hard-coded visible text |
+| `tests/dataset.test.js` | the generated company dataset: exact counts, 10 distinct `example.com` employees, 20 distinct Russian pool tasks, referential integrity, status/owner consistency, non-overlapping weekday sessions, activity story, determinism, columns match the sheet headers |
+| `tests/wording.test.js` | no demonstration wording in either dictionary, either page, the client scripts, the server error pages, the dataset or the invitation e-mail; removed keys are gone |
 | `tests/surface.test.js` | public-function allowlist, `api_*` gating, admin guards, **employee APIs take only a token and authenticate first**, task moves re-read the row under the lock, pages call only their own APIs, no HTML sinks in client code, responsive/ARIA structure, manifest scopes |
-| `tests/gas-sim.test.js` | runs the **real** `src/*.gs` (including all 51 `runTests` tests) against an in-memory **simulation** of Sheets/Properties/Lock/Cache/MailApp: pool lifecycle, claim races, assignment, foreign-id attacks, timers across tasks, comments, activity log, dashboard reconciliation, CSV, legacy-sheet migration, cleanup, caps, invitations |
-| `tests/live/accept.js` | end-to-end run against a deployed URL in a fresh signed-out Chrome (not part of `npm test`) |
+| `tests/gas-sim.test.js` | runs the **real** `src/*.gs` (including every `runTests` test) against an in-memory **simulation** of Sheets/Properties/Lock/Cache/MailApp: seeding (idempotent, keeps unrelated rows), the 20-task pool (claim once, manager assignment), per-employee token isolation, timers, dashboard reconciliation, CSV, migration, cleanup, caps, invitations |
+| `tests/live/accept.js` | **write-phase** end-to-end run against a deployed URL in a fresh signed-out Chrome: create employees/projects/tasks, claim, race, assign, timers, comments, reports, CSV, responsive, security probes (not part of `npm test`) |
+| `tests/live/accept-data.js` | **read-only** run against the seeded dataset: exact counts, every employee link, pool in the Employee UI, filters, reports/CSV/date boundaries, validation states, responsive, security (not part of `npm test`) |
 
-**Apps Script integration suite** (`runTests`, 51 tests, writes only to `Test_*`
-sheets; the mail service is replaced by a test double): Project Settings → Script
-properties → `ADMIN_MODE` = `runTests` → run `runTests` → View → Logs (expect
-`51/51 passed`).
+**Apps Script integration suite** (`runTests`, writes only to `Test_*` sheets; the
+mail service is replaced by a test double): Project Settings → Script properties →
+`ADMIN_MODE` = `runTests` → run `runTests` → View → Logs (expect `N/N passed`).
 
 ### Test results (actual, by environment)
 
 | Environment | Suite | Result |
 | --- | --- | --- |
-| Local Node | `pure.test.js` | **55/55** |
-| Local Node | `analytics.test.js` | **26/26** |
-| Local Node | `tasks.test.js` | **21/21** |
-| Local Node | `i18n.test.js` | **26/26** |
-| Local Node | `surface.test.js` | **25/25** |
-| Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (its simulated `runTests` ran all 51 integration tests) | **55/55** |
-| Real Apps Script editor | `runTests`, earlier 28-test suite | **28/28** — reported by the project owner before this change set |
-| Real Apps Script editor | `runTests`, current 51-test suite | **Not run.** It needs the owner to arm `ADMIN_MODE=runTests` in a signed-in editor, which the automation cannot do; the simulation is not a substitute |
-| Deployed app (v7), signed-out headless Chrome | `tests/live/accept.js` | **102/102** on the final run against the public URL |
-
-Total local Node checks: **208** (55 + 26 + 21 + 26 + 25 + 55).
+| Local Node | pure / analytics / tasks / i18n / dataset / wording / surface | **50 / 26 / 16 / 26 / 17 / 6 / 25** passed |
+| Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (including its simulated `runTests`) | **60/60** |
+| Deployed app (v8), signed-out headless Chrome | `tests/live/accept.js` (write phase) | **110/110** |
+| Deployed app, seeded data | `tests/live/accept-data.js` (read phase) | **pending** (needs the owner to run `resetDemoData`) |
+| Real Apps Script editor | `runTests` | **pending** (needs the owner to arm `ADMIN_MODE=runTests`; the simulation is not a substitute) |
 
 ## Live verification of the deployed URL
 
-`tests/live/accept.js` drives a fresh, signed-out Chrome profile over the
-DevTools protocol against the public URL (final run on the public deployment,
-version 7): **102/102 checks passed**. Earlier runs against a throw-away
-deployment failed only on mistakes in the script itself (reading a list before
-the server answered, an animation measured too early, a truncated string
-compared, a wrong expectation of which task is "current", an activity pattern
-that ignored interleaved comments) — no result was edited to pass; the app issues that the screenshots and
-timings exposed are listed under *Defects found and fixed*.
+Both drivers use a fresh, signed-out Chrome profile over the DevTools protocol
+against the public URL; nothing is mocked. `docs/live-write-phase-v8.log` is the
+output of the final write-phase run. Earlier runs of the same script failed only
+on mistakes in the script itself (reading a list before the server answered, a
+fixed sleep shorter than a slow server response, a stale card that the page's own
+60-second refresh had already removed, a data row of an earlier run matching the
+wording scan) — no result was edited to pass; each was fixed by waiting for the
+real condition or scoping the check, and the application was not changed for any of them.
 
 | Area | What was executed |
 | --- | --- |
-| Access, layout | Manager opens with no sign-in; dark persistent sidebar with seven sections and a profile/language block; demo banner |
-| Languages | Russian: brand, all seven navigation labels, no English interface text on any of the seven views; switch back; the choice survives a reload |
-| Employees | Create two (invitation skipped for example addresses, in the selected language); duplicate refused; search without a network request; empty result message; link, retry |
-| Projects, tasks | Create a project (duplicate refused); create tasks as pool / draft / direct assignment; statuses, priorities, the overdue flag and indicator in the table; hostile title shown as text and never executes; filters by project, status, priority, employee, deadline and text search; empty result |
-| Shared pool | Employee sees the published tasks (not drafts or assigned ones); search, project and priority filters; **Take task**; the task leaves the pool; appears in *My tasks*; a **second employee with a stale card is refused by the server** and via the API (`task_not_available`); the stored owner is unchanged |
-| Assignment | Manager assigns a pool task to employee B: same row, details kept, no duplicate, gone from A's pool, in B's *My tasks*; A cannot claim it, nor start, finish or comment on it with its id |
-| Timer | Start on the claimed task; badge "In progress"; another task's Start is disabled and the server also refuses; the dashboard counts "working now"; a refresh restores the timer; Pause freezes it, dashboard "on pause"; Resume continues; history shows both sessions; Finish (confirm) completes |
-| Comments | Employee comments (markup/formula text kept as text); Manager sees author and text and replies; employee sees the reply; a third party can neither read nor write that thread |
-| Activity | The task's history is `created, published, claimed, started, paused, resumed, paused, completed` plus both comments, with no workspace token |
-| Dashboard | Task counts by status equal the task rows and the displayed statuses; tracked time = report total = daily = per-employee = per-project = workload; the project's time is attributed; overdue count; cards show exactly these numbers; chart/donut/status bars/workload/feeds drawn; empty period message |
-| Reports, history, CSV | Report totals with projects; CSV (BOM, Russian headers incl. project, one line per session, no raw formula cell) downloaded and equal to the server's text; Work history lists every session; Settings page |
-| Responsive | No horizontal overflow on any of the 7 Manager and 5 employee views at 1366, 820 and 390 px; on mobile the sidebar is hidden behind an accessible menu button that opens and closes it; nav items are buttons with `aria-current`; labelled language selector; skip link; focus-visible rule |
-| Security | 22 internal functions (task moves, comments, cleanup, spreadsheet access, …) not callable; the five owner-only functions refuse (`not armed`); the spreadsheet id appears in no page/frame/API response; no workspace token in any manager or employee response; id/token not interchangeable; no stack traces; **no JavaScript error on any page** |
+| Access, layout | Manager opens with no sign-in; dark persistent sidebar with seven sections and a profile/language block; no banner, notice or footer about a demonstration |
+| Languages | Russian: brand, navigation, no English interface text on any of the seven views; switch back; the choice survives a reload; no demonstration wording on any view in either language |
+| Employees | Create two (invitation skipped for reserved-domain addresses, in the selected language); duplicate refused; search without a network request; empty result message; link, retry |
+| Projects, tasks | Create a project (duplicate refused); tasks as pool / draft / direct assignment; statuses, priorities, overdue indicator; hostile title shown as text; filters by project, status, priority, employee, deadline and text |
+| Shared pool | Employee sees the published tasks; search, project and priority filters; **Take task**; the task leaves the pool; a **second employee with a stale card is refused by the server** and via the API (`task_not_available`) |
+| Assignment | Manager assigns a pool task: same row, details kept, gone from other pools, in the assignee's *My tasks*; others cannot claim, start, finish or comment on it |
+| Timer | Start on the claimed task; another task's Start disabled and refused by the server; dashboard "working now"; refresh restores the timer; Pause freezes it; Resume continues; history; Finish |
+| Comments | Employee comment kept as text; Manager sees author and replies; employee sees the reply; a third party can neither read nor write that thread |
+| Dashboard, reports, CSV | Counts by status equal the rows; tracked time = report = daily = per-employee = per-project = workload; cards show exactly these numbers; CSV (BOM, Russian headers incl. project, one line per session, no raw formula) downloaded and equal to the server's text |
+| Responsive | No horizontal overflow on any Manager or employee view at 1366, 820 and 390 px; mobile menu opens and closes; `aria-current`, labelled selector, skip link, focus-visible rule |
+| Security | Internal functions not callable; owner-only functions refuse (`not armed`); spreadsheet id and workspace tokens absent from every page, frame and response; id/token not interchangeable; no stack traces; no JavaScript error on any page |
 
-**Not verified:** a real email delivery; Safari/Firefox or a physical phone; visual
-fidelity beyond the three emulated widths and the screenshots reviewed;
-concurrent anonymous load or quota exhaustion; a true *simultaneous* double-claim
-(the live test uses a stale second client, the lock behaviour under real
-parallel executions is by design of `LockService`, not measured); a raw HTTP
-client calling private functions without the page's `google.script.run`; keyboard-only
-use beyond the ARIA/focus checks.
+The read-only run over the seeded dataset is **pending** the owner loading it.
+
+**Not verified:** a real email delivery; Safari/Firefox or a physical phone;
+visual fidelity beyond the three emulated widths; concurrent anonymous load or
+quota exhaustion; a true *simultaneous* double-claim (the live test uses a stale
+second client; the lock behaviour under parallel executions is by design of
+`LockService`, not measured); a raw HTTP client calling private functions without
+the page's `google.script.run`.
 
 ## Known limitations
 
@@ -419,7 +454,8 @@ use beyond the ARIA/focus checks.
 - **Arming window.** Between adding `ADMIN_MODE=<function>` and running it, a visitor could call that same function first.
 - **Reassigning an owned task is not supported** (an assigned task can only be finished); a manager cannot close a task for an employee; priorities are low/medium/high.
 - **Times are UTC**; no pagination; the activity log is best effort; the Manager has no individual identity (comments are labelled "Manager").
-- **Existing test records** from this project's acceptance runs remain until the owner runs `cleanupTestArtifacts`; the pool is empty until a manager publishes tasks or the owner runs `resetDemoData`.
+- **Google's own banner.** Apps Script web apps served to other users show a Google-owned strip ("This application was created by another user"); it is outside the app and cannot be removed from code.
+- **Seeded data is loaded by the owner.** The generated dataset is written by `seedAssessmentData`/`resetDemoData`, which the owner must arm in the editor; the automation cannot do that.
 
 ## AI tools and models used
 
@@ -460,20 +496,21 @@ Evidence = an actual test, screenshot or observed result.
 appsscript.json         Manifest (scopes: spreadsheets, script.send_mail, script.scriptapp; web app: anyone, run as owner)
 scripts/setup-apps-script.sh   clasp create/push (Git Bash on Windows)
 src/
-  Code.gs        doGet, 30 api_*, safeApi_ (coded errors), access gate
+  Code.gs        doGet, 29 api_*, safeApi_ (coded errors), access gate
   Config.gs      DEFAULT_CONFIG, DEMO_CONFIG (limits, email caps), spreadsheet lookup (memoised)
   Tasks.gs       task rows, transitions (claim/assign/publish/…), decorated views
   Projects.gs    projects, comments, activity log
   Sessions.gs    timers per task; Employees.gs, Reports.gs, Repository.gs, Setup.gs (migration, cached check), Utils.gs
   Analytics.gs   dashboard and CSV export
   Email.gs       invitations: capability probe, caps, log, test-double hook
-  Demo.gs        adminOnly_, demo checks, sample data, resetDemoData, cleanupTestArtifacts
+  Demo.gs        adminOnly_, environment checks, assessment_seed_, seedAssessmentData, resetDemoData, cleanupTestArtifacts
+  dataset.gs     deterministic, idempotent company dataset builder (pure; also loaded by Node tests)
   pure.gs        pure logic (also loaded by Node tests)
   i18n.gs        dictionaries (ru/en), language rule, error codes, email/CSV texts
   Tests.gs       Apps Script integration tests (runTests, owner-armed)
   manager.html, manager_js.html, employee.html, employee_js.html, common_js.html, i18n_js.html, styles.html
 tests/
-  pure, analytics, tasks, i18n, surface, gas-sim (+ gas-sim.js, load-pure.js, load-i18n.js), run.js
-  live/accept.js, live/shots.js, live/cdp.js   signed-out browser acceptance + screenshots (dependency-free)
+  pure, analytics, tasks, i18n, dataset, wording, surface, gas-sim (+ gas-sim.js, load-pure.js, load-i18n.js), run.js
+  live/accept.js (write workflows), live/accept-data.js (read-only, seeded data), live/shots.js, live/cdp.js   signed-out browser acceptance + screenshots (dependency-free)
 package.json     `npm test`
 ```
