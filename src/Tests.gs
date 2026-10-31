@@ -19,6 +19,11 @@ var TEST_CTX = {
   headers: DEFAULT_CONFIG.HEADERS
 };
 
+// A single Apps Script execution is cut off at 6 minutes. The suite stops
+// starting new tests after this budget and reports the rest as NOT RUN (a failure),
+// so a slow run ends with a readable report instead of being killed mid-test.
+var TEST_TIME_BUDGET_MS = 300000;
+
 // OWNER-ONLY: runs only after the owner arms ADMIN_MODE (see adminOnly_ in
 // Demo.gs) because runTests is publicly callable through google.script.run.
 function runTests() {
@@ -83,24 +88,33 @@ function runTests() {
   setupSheets_(TEST_CTX);
 
   var results = [];
+  var startedAt = Date.now();
   for (var i = 0; i < tests.length; i++) {
     var t = tests[i];
-    resetTestSheets_();
     var name = t.name || ('test_' + i);
+    if (Date.now() - startedAt > TEST_TIME_BUDGET_MS) {
+      results.push({ name: name, ok: false, error: 'NOT RUN: the ' + Math.round(TEST_TIME_BUDGET_MS / 1000) + ' s time budget of one execution was used up' });
+      Logger.log('FAIL ' + name + ' -- NOT RUN (time budget)');
+      continue;
+    }
+    // Every step of a test, including the sheet reset before it, is attributed to
+    // that test and logged at once, so a failure of the spreadsheet service names
+    // the test it hit and the earlier results survive in the log.
     try {
+      resetTestSheets_();
       t();
       results.push({ name: name, ok: true });
+      Logger.log('OK   ' + name);
     } catch (err) {
-      results.push({ name: name, ok: false, error: err && err.message ? err.message : String(err) });
+      var msg = err && err.message ? err.message : String(err);
+      results.push({ name: name, ok: false, error: msg });
+      Logger.log('FAIL ' + name + ' -- ' + msg);
     }
   }
 
   var passed = 0;
   for (var k = 0; k < results.length; k++) if (results[k].ok) passed++;
-  Logger.log('==== runTests: ' + passed + '/' + results.length + ' passed ====');
-  for (var m = 0; m < results.length; m++) {
-    Logger.log((results[m].ok ? 'OK   ' : 'FAIL ') + results[m].name + (results[m].ok ? '' : ' -- ' + results[m].error));
-  }
+  Logger.log('==== runTests: ' + passed + '/' + results.length + ' passed in ' + Math.round((Date.now() - startedAt) / 1000) + ' s ====');
   return { total: results.length, passed: passed, results: results };
 }
 

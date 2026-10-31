@@ -33,6 +33,27 @@ function appendRow_(sheetName, obj, headers) {
   sheet.appendRow(row);
 }
 
+// Appends many rows with ONE write (and one row-cap check) instead of one
+// appendRow call per row. Seeding the company scenario is 373 rows; row by row it
+// costs ~1,500 spreadsheet service calls, which in the real runtime is minutes.
+// The cap is checked before anything is written, so a refused batch writes nothing.
+function appendRows_(sheetName, objs, headers) {
+  if (!objs || !objs.length) return 0;
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) throw new Error('Sheet not found: ' + sheetName + ' (run setupSheets_()).');
+  demo_checkRowCap_(sheetName, sheet, objs.length);
+  var values = objs.map(function (obj) {
+    return headers.map(function (h) {
+      var v = obj[h];
+      if (v === undefined || v === null) return '';
+      return cellSafe(v);
+    });
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+  return values.length;
+}
+
 // Updates the row whose `idField` equals `idValue`. Returns true on success.
 // Throws when the sheet or row is missing — the previous silent return had
 // callers happily report success when nothing was persisted (audit F-05).

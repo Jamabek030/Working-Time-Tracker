@@ -46,12 +46,13 @@ function demo_environmentOk_() {
 
 // Row caps keep an anonymous audience from filling the spreadsheet. Only the
 // three application sheets are capped; Test_* sheets used by runTests are not.
-function demo_checkRowCap_(sheetName, sheet) {
+function demo_checkRowCap_(sheetName, sheet, extra) {
   if (!DEMO_CONFIG.ENABLED) return;
   var keys = ['EMPLOYEES', 'TASKS', 'SESSIONS', 'INVITES', 'PROJECTS', 'COMMENTS', 'ACTIVITY'];
   for (var i = 0; i < keys.length; i++) {
     if (DEFAULT_CONFIG.SHEETS[keys[i]] === sheetName) {
-      checkRowLimit(Math.max(0, sheet.getLastRow() - 1), DEMO_CONFIG.LIMITS[keys[i]], sheetName);
+      // `extra` rows are about to be added in one batch: the last of them must still fit.
+      checkRowLimit(Math.max(0, sheet.getLastRow() - 1) + Math.max(1, extra || 1) - 1, DEMO_CONFIG.LIMITS[keys[i]], sheetName);
       return;
     }
   }
@@ -75,14 +76,12 @@ function assessment_seed_(ctx, nowMs) {
     plan.forEach(function (p) {
       var have = {};
       readAll_(ctx.sheets[p[0]]).forEach(function (r) { if (r.id) have[String(r.id)] = true; });
-      var n = 0;
-      data[p[1]].forEach(function (row) {
-        if (have[row.id]) return;
-        if (p[0] === 'EMPLOYEES' && emails[row.email.toLowerCase()]) return;
-        appendRow_(ctx.sheets[p[0]], row, DEFAULT_CONFIG.HEADERS[p[0]]);
-        n++;
+      var missing = data[p[1]].filter(function (row) {
+        if (have[row.id]) return false;
+        if (p[0] === 'EMPLOYEES' && emails[row.email.toLowerCase()]) return false;
+        return true;
       });
-      added[p[1]] = n;
+      added[p[1]] = appendRows_(ctx.sheets[p[0]], missing, DEFAULT_CONFIG.HEADERS[p[0]]);
     });
     return added;
   } finally {

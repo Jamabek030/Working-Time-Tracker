@@ -406,10 +406,10 @@ mail service is replaced by a test double): Project Settings → Script properti
 | Environment | Suite | Result |
 | --- | --- | --- |
 | Local Node | pure / analytics / tasks / i18n / dataset / wording / surface | **50 / 26 / 16 / 26 / 17 / 6 / 25** passed |
-| Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (including its simulated `runTests`) | **60/60** |
+| Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (including its simulated `runTests`) | **65/65** |
 | Deployed app (v8), signed-out headless Chrome | `tests/live/accept.js` (write phase) | **110/110** |
 | Deployed app (v8), seeded data, signed-out headless Chrome | `tests/live/accept-data.js` (read phase, `docs/live-read-phase-seeded-v8.log`) | **89/89** |
-| Real Apps Script editor | `runTests` | **Not verified by the automation.** It needs the owner to arm `ADMIN_MODE=runTests` in a signed-in editor; no log was supplied to this session, and the simulation is not a substitute |
+| Real Apps Script editor | `runTests` | **First real run (v8 code, 13:26) FAILED** with `Document "<id>" is missing` after ~5 minutes (see defect 9). Fix pushed; **re-run pending** — it needs the owner to arm `ADMIN_MODE=runTests`; the simulation is not a substitute |
 
 ## Live verification of the deployed URL
 
@@ -489,6 +489,8 @@ Evidence = an actual test, screenshot or observed result.
 6. **Slow list refresh** (found by timing the live run): after creating an employee the list took ~12 s and the form stayed disabled, because every request re-verified eight sheets and the page reloaded three unrelated lists in sequence. Fixed: spreadsheet handle reused per request, sheet check cached for 120 s (never bypassing the access check), the form re-enabled immediately and only the affected list reloaded.
 7. **Task table headers broke mid-word at desktop width** (screenshot) — fixed with nowrap headers/buttons.
 8. Test-data pollution of the shared demo by this project's own acceptance runs — mitigated by exactly-matchable fictional names and the owner-armed `cleanupTestArtifacts`, now also covering acceptance projects and their tasks, comments and activity.
+
+9. **The first real `runTests` run failed after ~5 minutes with `Exception: Document "<id>" is missing (possibly deleted, or you don't have access)`** at `Tests.gs:112` (`sheet.getLastRow()` in `resetTestSheets_`, run before each test). The id is read consistently (one property, one `openById`, no hard-coded id; `resetDemoData` had just used the same id), so it is not a configuration error. Counting spreadsheet service calls in the simulator showed the cause of the load: one seed wrote 373 rows with one `appendRow` call each (**1,513 calls** incl. a row-cap read per row) and the suite seeds nine times, so the suite made **14,873** calls against **5,409** for v7 (the last version whose suite was known to fit). The harness also only guarded the test body, so a service failure in the reset aborted the run and, because results were logged only at the end, hid which test it hit. Google's own reason for returning this message under that load cannot be observed from outside the real runtime. Fixes: `appendRows_` (one cap check and one `setValues` per sheet; a seed is now **51 calls**, the suite **5,021**); each test (including its reset) is guarded and logged immediately; a 300 s time budget reports unstarted tests as `NOT RUN` failures. Five regression tests fail on the old code and pass on the fix.
 
 ## Files
 

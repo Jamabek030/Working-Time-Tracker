@@ -448,6 +448,88 @@ test('sim: seeded history is usable - start, pause, resume and finish keep exact
   assertEq(env.ctx.sessions_list_().filter(x => x.status === 'active').length, 0);
 });
 
+// --- the real runTests run died with 'Document "<id>" is missing' after ~5 minutes ---
+// Cause found by counting spreadsheet service calls (see README "Defects found"):
+// seeding wrote 373 rows with one appendRow call each (~1,500 service calls per
+// seed, 9 seeds per suite) and the whole suite made ~14,900 calls against ~5,400
+// before the seeding tests existed. These tests pin the call budget, the
+// all-or-nothing row cap of a batch, and that a failing service call is attributed
+// to its test instead of aborting the run.
+function countServiceCalls(env) {
+  const counts = {};
+  const bump = k => { counts[k] = (counts[k] || 0) + 1; };
+  const origGet = env.ss.getSheetByName.bind(env.ss);
+  env.ss.getSheetByName = name => {
+    bump('getSheetByName');
+    const sheet = origGet(name);
+    if (!sheet || sheet.__counted) return sheet;
+    sheet.__counted = true;
+    ['getLastRow', 'getLastColumn', 'appendRow', 'getRange'].forEach(m => { const f = sheet[m].bind(sheet); sheet[m] = (...a) => { bump(m); const r = f(...a); if (m === 'getRange' && !r.__counted) { r.__counted = true; ['setValues', 'getValues', 'setValue', 'clearContent'].forEach(q => { const g = r[q].bind(r); r[q] = (...b) => { bump(q); return g(...b); }; }); } return r; }; });
+    return sheet;
+  };
+  counts.total = () => Object.keys(counts).filter(k => k !== 'total').reduce((a, k) => a + counts[k], 0);
+  return counts;
+}
+
+test('sim: seeding the whole scenario is a handful of batched writes, not one call per row', () => {
+  const env = createEnv();
+  env.ctx.setupSheets_(env.ctx.getContext_());
+  const c = countServiceCalls(env);
+  assertEq(seedCounts(env), SEED_COUNTS);
+  assertEq(c.appendRow || 0, 0, 'no per-row appendRow');
+  assert(c.setValues <= 6, 'one setValues per sheet at most: ' + c.setValues);
+  assert(c.total() <= 120, 'total spreadsheet calls for a seed: ' + c.total() + ' (was ~1,500 row by row)');
+  const again = countServiceCalls(env);
+  assertEq(seedCounts(env), { projects: 0, employees: 0, tasks: 0, sessions: 0, comments: 0, activity: 0 });
+  assertEq(again.setValues || 0, 0, 'a repeat run writes nothing');
+});
+function seedCounts(env) { return env.ctx.assessment_seed_(env.ctx.getContext_(), Date.now()); }
+
+test('sim: the whole runTests suite stays inside a spreadsheet-call budget that fits one 6-minute execution', () => {
+  const env = createEnv(); env.arm('runTests');
+  const c = countServiceCalls(env);
+  const res = env.ctx.runTests();
+  assertEq(res.passed, res.total);
+  // v7 (51 tests, no seeding) made ~5,400 calls; the unbatched seeding pushed it to ~14,900 and the real run failed.
+  assert(c.total() <= 6500, 'runTests made ' + c.total() + ' spreadsheet service calls');
+});
+
+test('sim: a batch that would exceed a row cap is refused before anything is written', () => {
+  const env = createEnv();
+  env.ctx.setupSheets_(env.ctx.getContext_());
+  env.ctx.DEMO_CONFIG.LIMITS.TASKS = 30;
+  const e = throwsMsg(() => seedCounts(env));
+  assert(/Storage limit reached: at most 30 Tasks/.test(e), e.slice(0, 80));
+  assertEq(env.ctx.tasks_list_().length, 0, 'the refused batch wrote no task row');
+  env.ctx.DEMO_CONFIG.LIMITS.TASKS = 48;
+  assertEq(seedCounts(env).tasks, 48, 'a cap equal to the batch size fits exactly');
+});
+
+test('sim: a spreadsheet-service failure between tests is attributed to its test; the run continues and logs as it goes', () => {
+  const env = createEnv(); env.arm('runTests');
+  const orig = env.ctx.resetTestSheets_;
+  let n = 0;
+  env.ctx.resetTestSheets_ = function () { if (++n === 3) throw new Error('Document "SIM-ID" is missing (possibly deleted, or you don\'t have access)'); return orig(); };
+  const res = env.ctx.runTests();
+  const failed = res.results.filter(r => !r.ok);
+  assertEq(failed.length, 1);
+  assert(/Document "SIM-ID" is missing/.test(failed[0].error), failed[0].error);
+  assertEq(failed[0].name, res.results[2].name, 'the third test is the one named');
+  assertEq(res.passed, res.total - 1);
+  const log = env.log.logger;
+  const failIdx = log.findIndex(l => l.indexOf('FAIL ' + failed[0].name) === 0);
+  assert(failIdx >= 0 && log.findIndex(l => l.indexOf('==== runTests') === 0) > failIdx, 'the failure was logged before the summary');
+  assert(log.slice(0, failIdx).filter(l => /^OK   /.test(l)).length === 2, 'earlier results were already in the log');
+});
+
+test('sim: when the time budget is used up the remaining tests are reported as NOT RUN failures, not silently dropped', () => {
+  const env = createEnv(); env.arm('runTests');
+  env.ctx.TEST_TIME_BUDGET_MS = -1;
+  const res = env.ctx.runTests();
+  assertEq([res.passed, res.results.every(r => !r.ok && /^NOT RUN/.test(r.error))], [0, true]);
+  assertEq(res.total, EXPECTED_INTEGRATION_TESTS);
+});
+
 test('sim: row caps stop anonymous growth with an understandable message', () => {
   const env = createEnv();
   env.ctx.DEMO_CONFIG.LIMITS.EMPLOYEES = 2;
