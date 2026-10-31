@@ -1,0 +1,63 @@
+Real Apps Script execution log of runTests, as pasted by the project owner into the AI session
+(owner-run in the Apps Script editor; the automation did not execute it). Code: HEAD of the Apps Script
+project at commit e33b8a0; the public deployment stayed at version 8. The editor shows Russian labels:
+Примечание = Note, Информация = Info, Ошибка = Error. Times are the editor's local time.
+
+14:05:14	Примечание	Выполнение начато
+14:05:20	Информация	OK   test_createEmployeeAndLink_
+14:05:25	Информация	OK   test_assignTask_
+14:05:30	Информация	OK   test_startPauseResume_
+14:05:35	Информация	OK   test_crossDayNoOvernight_
+14:05:39	Информация	OK   test_sumAcrossSessions_
+14:05:43	Информация	OK   test_reloadRestoresState_
+14:05:48	Информация	OK   test_noDuplicateActiveTimer_
+14:05:54	Информация	OK   test_changeTaskPreservesHistory_
+14:05:59	Информация	OK   test_reportFiltersByRange_
+14:06:01	Информация	OK   test_emptyReport_
+14:06:03	Информация	OK   test_invalidInputsRejected_
+14:06:05	Информация	OK   test_pauseWithNoActiveSessionRejected_
+14:06:07	Информация	OK   test_formulaInjectionNeutralized_
+14:06:09	Информация	OK   test_updateRowThrowsWhenMissing_
+14:06:10	Информация	OK   test_closeSessionRejectsBadStart_
+14:06:13	Информация	OK   test_rotateTokenInvalidatesOldLink_
+14:06:14	Информация	OK   test_lengthLimitsEnforced_
+14:06:16	Информация	OK   test_strictDateParsing_
+14:06:18	Информация	OK   test_sumSessionMsFallsBackToTimestamps_
+14:06:20	Информация	OK   test_ensureSheetRefusesToOverwriteDataWithBlankHeaders_
+14:06:29	Информация	OK   test_demoResetClearsOnlyTargetSheets_
+14:06:37	Информация	OK   test_assessmentSeedIsIdempotent_
+14:06:46	Информация	OK   test_assessmentSeedKeepsUnrelatedRows_
+14:06:59	Информация	OK   test_assessmentPoolHasTwentyAvailableTasks_
+14:07:07	Информация	OK   test_assessmentReportsMatchSessions_
+14:07:13	Информация	OK   test_assessmentKeepsTaskHistory_
+14:07:16	Информация	OK   test_emailKillSwitchStopsAllSending_
+14:07:18	Информация	OK   test_adminFunctionsRefuseWhenNotArmed_
+14:07:21	Информация	OK   test_adminArmingIsConsumedOnUse_
+14:07:22	Информация	OK   test_validationMessagesAreUserSafe_
+14:07:26	Информация	OK   test_inviteSentThroughDoubleWithCorrectLink_
+14:07:27	Информация	NOTE: the "invitation send failed: SIMULATED ..." error line that follows is the failure this test simulates on purpose; the mail service is not called.
+14:07:28	Ошибка	invitation send failed: SIMULATED (test double): Service invoked too many times for one day: email.
+14:07:30	Информация	OK   test_inviteFailureKeepsEmployeeAndCanBeRetried_
+14:07:32	Информация	OK   test_inviteNeverMailsReservedAddresses_
+14:07:39	Информация	OK   test_inviteDailyAndRecipientLimits_
+14:07:43	Информация	OK   test_inviteTextCannotInjectHeadersOrLines_
+14:07:52	Информация	OK   test_dashboardAgreesWithReports_
+14:08:03	Информация	OK   test_dashboardWorkingAndPausedStates_
+14:08:12	Информация	OK   test_csvExportMatchesReportAndNeutralisesFormulas_
+14:08:22	Информация	OK   test_cleanupRemovesOnlyAcceptanceArtifacts_
+14:08:24	Информация	OK   test_cleanupRefusesWhenNotArmed_
+14:08:30	Информация	OK   test_poolTaskLifecycleDraftPublishUnpublish_
+14:08:39	Информация	OK   test_claimTaskOnlyOnce_
+14:08:43	Информация	OK   test_cannotClaimDraftOrCompletedOrAssignedTasks_
+14:08:49	Информация	OK   test_assignPoolTaskToEmployeeKeepsOneRow_
+14:08:54	Информация	OK   test_assignKeepsRecordedWorkOfTheEmployee_
+14:08:59	Информация	OK   test_transitionTableIsEnforced_
+14:09:04	Информация	OK   test_employeeCannotUseAnotherEmployeesTask_
+14:09:10	Информация	OK   test_oneTimerPerEmployeeAcrossSeveralTasks_
+14:09:21	Информация	OK   test_derivedStatusAndOverdue_
+14:09:26	Информация	OK   test_commentsAreOwnedAppendOnlyAndVisibleToTheManager_
+14:09:33	Информация	OK   test_dashboardStatusCountsAndProjectTimeReconcile_
+14:09:36	Информация	OK   test_tasksSheetGainsNewColumnsWithoutTouchingData_
+14:09:39	Информация	OK   test_projectsRequireUniqueNames_
+14:09:39	Информация	==== runTests: 53/53 passed in 262 s ====
+14:09:39	Примечание	Выполнение завершено

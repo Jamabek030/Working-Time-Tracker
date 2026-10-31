@@ -569,6 +569,84 @@ test('sim: runTests always clears the mail block, even when a test fails or the 
   assertEq(c.ctx.mailBlockedForTests_, false);
 });
 
+// --- required scenarios named by the external evaluation: restarting the timer and an
+// empty report. They are covered by the tests below through the public api_* layer,
+// with stored start times moved back so that real, minutes-long durations are measured.
+function backdateSession(w, sessionId, minutes) {
+  const start = new Date(Date.now() - minutes * 60000).toISOString();
+  w.api.updateRow_(w.api.DEFAULT_CONFIG.SHEETS.SESSIONS, 'id', sessionId, { startTime: start }, w.api.DEFAULT_CONFIG.HEADERS.SESSIONS);
+}
+const todayUtc = () => new Date().toISOString().slice(0, 10);
+
+test('sim: restarting the timer three times opens three sessions whose durations add up exactly across task, report, dashboard and CSV', () => {
+  const w = world();
+  const t = w.api.api_createTask({ title: 'Restarted task', mode: 'assign', employeeId: w.a.id });
+  const run = (minutes, first) => {
+    const s = first ? w.api.api_startSession(w.ta, t.id) : w.api.api_resumeSession(w.ta, t.id);
+    backdateSession(w, s.id, minutes);
+    return w.api.api_pauseSession(w.ta);
+  };
+  const p1 = run(5, true), p2 = run(10, false), p3 = run(15, false);
+  assertEq(new Set([p1.id, p2.id, p3.id]).size, 3, 'every restart opens a new session row');
+  [[p1, 5], [p2, 10], [p3, 15]].forEach(([p, m]) => { assert(p.durationMs >= m * 60000 && p.durationMs < m * 60000 + 2000, 'duration of the ' + m + ' min session: ' + p.durationMs); });
+  const sum = p1.durationMs + p2.durationMs + p3.durationMs;
+  const view = w.api.api_getEmployeeState(w.ta).tasks.find(x => x.id === t.id);
+  assertEq(view.trackedMs, sum, 'task time = sum of its sessions');
+  assertEq(view.displayStatus, 'paused', 'stopped between restarts');
+  const rows = w.api.api_generateReport(todayUtc(), todayUtc());
+  const mine = rows.find(r => r.employeeId === w.a.id);
+  assertEq(mine.totalMs, sum, 'report total = sum');
+  assertEq(mine.sessions.length, 3);
+  assertEq(w.api.api_getDashboard(todayUtc(), todayUtc()).metrics.trackedMs, sum, 'dashboard total = sum');
+  const csv = w.api.api_exportReportCsv(todayUtc(), todayUtc(), w.a.id, 'en');
+  assertEq(csv.rows, 3, 'one CSV line per session');
+  assertEq(w.api.sessions_forEmployee_(w.a.id).filter(x => x.status === 'active').length, 0, 'nothing left running');
+});
+
+test('sim: the stopped time between restarts is never counted, and a restart is refused while a timer runs or after the task is finished', () => {
+  const w = world();
+  const t = w.api.api_createTask({ title: 'Gap task', mode: 'assign', employeeId: w.a.id });
+  const s1 = w.api.api_startSession(w.ta, t.id); backdateSession(w, s1.id, 60);
+  const p1 = w.api.api_pauseSession(w.ta);
+  // the session ended just now; pretend the employee came back much later by moving it into the past
+  const longAgo = new Date(Date.now() - 3 * 3600000);
+  w.api.updateRow_(w.api.DEFAULT_CONFIG.SHEETS.SESSIONS, 'id', p1.id, { startTime: new Date(+longAgo - 3600000).toISOString(), endTime: longAgo.toISOString() }, w.api.DEFAULT_CONFIG.HEADERS.SESSIONS);
+  const s2 = w.api.api_resumeSession(w.ta, t.id); backdateSession(w, s2.id, 10);
+  assert(/@@session_running@@/.test(throwsMsg(() => w.api.api_startSession(w.ta, t.id))), 'cannot start a second timer while one runs');
+  assert(/@@session_running@@/.test(throwsMsg(() => w.api.api_resumeSession(w.ta, t.id))), 'cannot resume a running timer');
+  const p2 = w.api.api_pauseSession(w.ta);
+  const total = w.api.api_getEmployeeState(w.ta).tasks.find(x => x.id === t.id).trackedMs;
+  assertEq(total, p1.durationMs + p2.durationMs, 'only the two worked intervals count');
+  assert(total < 3600000 + 11 * 60000, 'the 2-hour gap between them is not in the total: ' + total);
+  w.api.api_finishTask(w.ta, t.id);
+  assert(/@@task_not_workable@@/.test(throwsMsg(() => w.api.api_resumeSession(w.ta, t.id))), 'a finished task cannot be restarted');
+  assert(/@@no_session_to_pause@@/.test(throwsMsg(() => w.api.api_pauseSession(w.ta))), 'stopping with nothing running is refused');
+});
+
+test('sim: an empty report is a clean, empty answer in every way it can occur (no data, other dates, other employee, CSV, dashboard)', () => {
+  const w = world();
+  // 1. no work recorded at all: employees appear only because they have tasks created today; every row is zero time with no sessions
+  const none = w.api.api_generateReport(todayUtc(), todayUtc());
+  assert(none.length > 0 && none.every(r => r.totalMs === 0 && r.sessions.length === 0), 'zero-time rows, no sessions');
+  const csvNone = w.api.api_exportReportCsv(todayUtc(), todayUtc(), '', 'en');
+  assertEq([csvNone.rows, csvNone.csv.split('\r\n').filter(Boolean).length], [0, 1], 'CSV is the header line only');
+  const d0 = w.api.api_getDashboard(todayUtc(), todayUtc());
+  assertEq([d0.metrics.trackedMs, d0.daily.length, d0.daily[0].ms], [0, 1, 0], 'dashboard shows zero for the day');
+  // 2. work recorded, but the chosen period has none of it
+  const t = w.api.api_createTask({ title: 'Worked today', mode: 'assign', employeeId: w.a.id });
+  const s = w.api.api_startSession(w.ta, t.id); backdateSession(w, s.id, 5); w.api.api_pauseSession(w.ta);
+  assertEq(w.api.api_generateReport('2000-01-01', '2000-01-31'), [], 'a period before the work is empty');
+  assertEq(w.api.api_exportReportCsv('2000-01-01', '2000-01-31', '', 'ru').rows, 0);
+  // 3. the other employee has no work, so their filtered report is empty while the whole report is not
+  const worked = w.api.api_generateReport(todayUtc(), todayUtc());
+  assertEq(worked.filter(r => r.totalMs > 0).map(r => r.employeeId), [w.a.id], 'only the employee who worked has time');
+  assertEq(worked.find(r => r.employeeId === w.b.id).sessions.length, 0);
+  assertEq(w.api.api_exportReportCsv(todayUtc(), todayUtc(), w.b.id, 'en').rows, 0, 'filter on an employee without sessions');
+  // 4. invalid ranges are refused rather than answered with an empty report
+  assert(/^@@date_format@@/.test(throwsMsg(() => w.api.api_generateReport('2026-1-1', todayUtc()))));
+  assert(/^@@date_range@@|^@@date_order@@|^@@/.test(throwsMsg(() => w.api.api_generateReport(todayUtc(), '2000-01-01'))), 'reversed range refused');
+});
+
 test('sim: row caps stop anonymous growth with an understandable message', () => {
   const env = createEnv();
   env.ctx.DEMO_CONFIG.LIMITS.EMPLOYEES = 2;

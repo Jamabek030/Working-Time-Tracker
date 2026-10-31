@@ -42,7 +42,7 @@
 # .clasp.json (gitignored).
 #
 # Example:
-#   SHEET_ID=1gvqlfeFUZ6jcWNeUYJ-7u3v5E1NumxF10fwZVkU_t-s \
+#   SHEET_ID=<id of your test spreadsheet> \
 #     ./scripts/setup-apps-script.sh
 # ---------------------------------------------------------------------------
 

@@ -1,0 +1,112 @@
+PASS A1 Manager opens with no Google sign-in -- https://script.google.com/macros/s/<id>/exec
+PASS A2 persistent dark sidebar with the seven sections and a profile/language block
+PASS A3 no demonstration banner, notice or footer text on the Manager screen
+PASS B1 Russian: header, navigation and sidebar translated
+PASS B2 no English interface text left on "overview" in Russian
+PASS B2b no demonstration wording on "overview" (ru)
+PASS B2 no English interface text left on "projects" in Russian
+PASS B2b no demonstration wording on "projects" (ru)
+PASS B2 no English interface text left on "tasks" in Russian
+PASS B2b no demonstration wording on "tasks" (ru)
+PASS B2 no English interface text left on "employees" in Russian
+PASS B2b no demonstration wording on "employees" (ru)
+PASS B2 no English interface text left on "reports" in Russian
+PASS B2b no demonstration wording on "reports" (ru)
+PASS B2 no English interface text left on "history" in Russian
+PASS B2b no demonstration wording on "history" (ru)
+PASS B2 no English interface text left on "settings" in Russian
+PASS B2b no demonstration wording on "settings" (ru)
+PASS B3 English restored
+PASS B4 the language choice survives a reload
+PASS C1 employee A created; the example address is reported as not mailed -- Employee Verifier Alpha was created. No email was sent because the address belongs to a reserved domain that cannot receive mail. Copy the workspace link from Details.
+PASS C2 both employees are listed with status and invitation badge -- Verifier Beta demo.verifier.1793429771324@example.com Not started 00:00:00 Skipped (reserved address) Details
+PASS C3 duplicate email refused with a clear message -- An employee with this email already exists.
+PASS C4 Details give a copyable workspace link independent of email -- -jyXWA/exec?page=employee&token=<redacted>&lang=en
+PASS C5 retrying an invitation to a reserved-domain address is reported accurately (no mail) -- No email was sent because the address belongs to a reserved domain that cannot receive mail. Copy the workspace link from Details.
+PASS D1 employee search by email narrows the list without a server request -- rows=1
+PASS D2 empty search result shows a clear message
+PASS E1 a project can be created -- Project Acceptance project 1793429771323 was created.
+PASS E2 the project appears in the projects list
+PASS E3 a duplicate project name is refused -- A project with this name already exists.
+PASS E4 a task is published to the shared pool -- Task "Acceptance pool one 1793429771323" was published to the shared pool.
+PASS E5 a draft task can be saved -- Task "Acceptance draft 1793429771323" was saved as a draft.
+PASS E6 a task can be assigned directly to a person -- Task "Acceptance direct A 1793429771323" was assigned to Verifier Alpha.
+PASS E7 task rows carry the right statuses, priorities, deadlines and the overdue flag -- available,true,false
+PASS E8 the Tasks table shows project, priority, status and an overdue indicator -- Acceptance pool one 1793429771323 Acceptance project 1793429771323 In the shared pool Available High 01/01/2000 Overdue 00:00:00 Details|row-overdue|OVERDUE
+PASS E9 a hostile task title is shown as text and never executes -- {"imgs":0,"flag":"undefined"}
+PASS F1 filter by project -- rows=5
+PASS F2 filter by status -- rows=3
+PASS F3 filter by priority
+PASS F4 filter by deadline (overdue) -- rows=1
+PASS F5 deadline filter "due within 7 days" excludes far-future and overdue tasks
+PASS F6 filter by employee -- rows=1
+PASS F7 filter "unassigned" lists pool and draft tasks only
+PASS F8 text search over title and description
+PASS F9 no matching task shows a clear message
+PASS G1 workspace opens anonymously, shows the sidebar and no Manager console
+PASS G2 overview shows the employee's current task (their first assigned task) -- Acceptance initial task A
+PASS G3 Available tasks lists the published pool tasks (and not drafts or assigned ones) -- 7 tasks
+PASS G4 the pool can be searched
+PASS G5 the pool can be filtered by project
+PASS G6 the pool can be filtered by priority
+PASS G7 an employee claims a pool task -- The task is yours now. You can start it from My tasks.
+PASS G8 the claimed task left the pool
+PASS G9 the claimed task appears in My tasks
+PASS G10 a second employee cannot claim the same task (server-side refusal shown in the UI) -- This task is no longer available. It may have been taken or assigned to someone else.
+PASS G11 repeating the claim through the API is refused with a translatable code -- ERR:Error: @@task_not_available@@{}@@This task is no longer available.
+PASS G12 the stored owner is still employee A
+PASS G13 Start on the claimed task
+PASS G14 the task shows "In progress" -- In progress,High,Overdue
+PASS G15 another task cannot be started while one runs (button disabled) -- disabled
+PASS G16 the server also refuses a second timer -- ERR:Error: @@session_running@@{}@@A session is already running.
+PASS G17 the dashboard counts the running timer as "working now" -- 1
+PASS G18 after a refresh the running timer and current task are restored -- 00:00:20
+PASS G19 Pause freezes the elapsed time -- 00:00:25 vs 00:00:25
+PASS G20 the dashboard counts the employee as on pause -- 2
+PASS G21 Resume continues from the paused total -- 00:00:25 -> 00:00:30
+PASS G22 Work history lists the paused session and the running one -- TASK START END DURATION STATUS Acceptance pool one 1793429771323 31/10/2026, 06:59:11 UTC — 00:00:05
+PASS H1 a shared-pool task is assigned to a specific employee -- The task was assigned. It left the shared pool.
+PASS H2 same row, now owned by B, no duplicate, details kept -- true,assigned
+PASS H3 the assigned task is gone from the other employees' pool
+PASS H4 other employees cannot claim an assigned task -- ERR:Error: @@task_not_available@@{}@@This task is no longer available.
+PASS H5 other employees cannot start, finish or comment on it (client-supplied ids do not help) -- ERR:Error: @@task_not_yours@@{}@@This ta | ERR:Error: @@task_not_yours@@{}@@This ta | ERR:Error: @@task_not_yours@@{}@@This ta
+PASS H6 the task appears in the assignee's My tasks -- Acceptance pool two 1793429771323 | Acceptance initial task B
+PASS I1 an employee comments on their own task -- Comment sent.
+PASS I2 the Manager sees the employee comment, with its author, as plain text -- VA Verifier Alpha · 31/10/2026, 07:00:03 UTC Employee question <b>bold</b> =SUM(1+1)
+PASS I3 comment markup is never rendered
+PASS I4 the Manager can answer
+PASS I5 the employee sees the Manager's reply in the same thread (history preserved) -- VA Verifier Alpha · 31/10/2026, 07:00:03 UTC Employee question <b>bold</b> =SUM(1+1) M Manager · 31/
+PASS I6 another employee can neither comment on nor read that thread -- ERR:Error: @@task_not_yours@@{}@@This task is not assigned t
+PASS I7 Finish completes the task (confirm dialog accepted) -- dialogs=1
+PASS I8 the activity history records the whole life of the task in order (plus both comments) -- created,published,claimed,started,paused,resumed,paused,commented,commented,completed
+PASS I9 the task is completed and its tracked time equals the sum of its sessions -- 00:00:37
+PASS I10 no workspace token appears in task details or activity
+PASS J1 task counts by status add up to the number of tasks -- 59 tasks
+PASS J2 every status bucket equals the count of tasks with that displayed status -- {"paused":3,"in_progress":0,"draft":5,"available":5,"replaced":7,"assigned":27,"completed":12}
+PASS J3 tracked time = report total = daily buckets = per-employee = per-project = workload -- 00:08:42
+PASS J4 the time of the acceptance project is attributed to that project
+PASS J5 the overdue count equals the overdue tasks -- 1
+PASS J6 the dashboard cards show exactly these figures -- 27|0|2|30|12|1|00:08:42
+PASS J7 chart, donut, status bars, workload and activity feeds are drawn
+PASS J8 an empty period shows clear messages and zero time
+PASS J9 the report lists employees with totals and projects
+PASS J10 CSV: BOM, localized headers incl. project, one line per reported session -- lines=29
+PASS J11 CSV contains this run's project and no raw formula cell
+PASS J12 the browser downloaded the .csv and it equals the server's CSV -- working-time-report_2026-10-25_2026-10-31.csv
+PASS J13 Work history lists every session of the period -- rows=28
+PASS J14 Settings shows language, mail status and the time-zone note, with no demonstration text
+PASS K1 no horizontal page overflow on any Manager or employee view at desktop, tablet and mobile widths
+PASS K2 on mobile the sidebar is hidden behind a menu button that opens and closes it -- {"offscreen":true,"shown":true,"open":true,"onscreen":true,"closed":true}
+PASS K3 tabs/nav are buttons with aria-current, language selector labelled, skip link present
+PASS K4 keyboard focus is visible (focus-visible outline rule present for focusable controls)
+PASS L1 internal functions (task moves, comments, cleanup, spreadsheet access, …) are not callable from the client -- 25 probed
+PASS L2 owner-only functions refuse an anonymous caller (not armed) -- runTests => ERR:Error: runTests is an ow | resetDemoData => ERR:Error: resetDemoDat | seedAssessmentData => ERR:Error: seedAss | cleanupTestArtifacts => ERR:Error: clean | enableOpenAccess => ERR:Error: enableOpe | disableOpenAccess => ERR:Error: disableO
+PASS L3 the spreadsheet id appears in no page, frame or API response
+PASS L4 no workspace token in manager list/dashboard/report/task responses
+PASS L5 an employee id is refused as a token and a token is refused as an employee id -- ERR:Error: @@invalid_link@@{}@@Invalid w | ERR:Error: @@employee_not_found@@{}@@Emp
+PASS L6 an employee's state contains nothing of the other employee (no token, email or tasks)
+PASS L7 error responses carry no stack traces or file names
+PASS L7b no demonstration wording on any employee or Manager screen reached in this run
+PASS L8 no JavaScript errors were raised by any page during the run
+
+110/110 checks passed

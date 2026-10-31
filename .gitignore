@@ -4,3 +4,6 @@ node_modules/
 src/appsscript.json
 .DS_Store
 *.log
+
+# evidence logs of real and live test runs are kept on purpose
+!docs/*.log

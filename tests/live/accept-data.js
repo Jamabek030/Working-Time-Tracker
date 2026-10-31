@@ -263,6 +263,13 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     rec('H6 date boundaries: a single day equals the sum of its sessions; adjacent days add up to the 3-day range; today has no time yet', dDay.metrics.trackedMs === dayMs && sumDays === span.metrics.trackedMs && (await apiJson(mgr, 'api_getDashboard', [today, today])).metrics.trackedMs === 0, day + ' ' + fmtMs(dayMs));
     const bad = await Promise.all([apiCall(mgr, 'api_generateReport', ['2026-13-40', today]), apiCall(mgr, 'api_generateReport', [today, from30]), apiCall(mgr, 'api_getDashboard', ['2000-01-01', '2100-01-01']), apiCall(mgr, 'api_generateReport', ['', ''])]);
     rec('H7 invalid, reversed and over-long date ranges are refused with translatable messages', bad.every(r => /^ERR:.*@@/.test(r)), bad.map(r => r.slice(0, 30)).join(' | '));
+    // empty report in the real UI: a period before any work, and today (the seeded history ends yesterday)
+    for (const [label, f, t] of [['a period before any work', '2000-01-01', '2000-01-31'], ['today, when nobody has worked yet', today, today]]) {
+      await nav('reports');
+      await ev(mgr, `(function(){var f=document.querySelector('#report-form');f.elements['from'].value='${f}';f.elements['to'].value='${t}';f.querySelector('button[type=submit]').click()})()`);
+      const emptyTxt = await until(mgr, "document.querySelector('#report-content').innerText", x => x.length > 5, 30000);
+      rec('H1b the Reports view shows the empty state for ' + label, /В выбранном периоде активности нет./.test(emptyTxt) && (await ev(mgr, "document.querySelectorAll('#report-content table').length")) === 0, emptyTxt.replace(/s+/g, ' ').slice(0, 80));
+    }
     await nav('history');
     await ev(mgr, `(function(){var f=document.querySelector('#history-form');f.elements['from'].value='${from30}';f.elements['to'].value='${today}';f.querySelector('button[type=submit]').click()})()`);
     await until(mgr, "document.querySelector('#history-content').innerText", t => /\d+/.test(t) && t.length > 50, 30000);

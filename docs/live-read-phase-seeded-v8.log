@@ -1,0 +1,93 @@
+PASS A1 exactly 10 employees, all on example.com, none left over from earlier tests -- 10 employees
+PASS A2 employee names are distinct, Russian and complete -- Волкова, Кузнецов, Лебедева, Назаров, Ковалёва, Сидоров, Петренко, Морозов, Сулейменова, Новиков
+PASS A3 5 projects, none of them an acceptance leftover -- Разработка программного обеспечения | Тестирование и аудит продуктов | Администрирование и инфраструктура | Сопровождение и техническая поддержка | Данные, отчётность и автоматизация
+PASS A4 48 tasks with the intended distribution (2 drafts, 20 pool, 4 assigned, 8 paused, 14 completed) -- ["draft:2","available:20","assigned:4","in_progress:0","paused:8","completed:14"]
+PASS A5 the shared pool holds exactly 20 distinct Russian tasks, unassigned, each with a project, priority, due date and expected result -- 20 pool tasks
+PASS A6 no internal labels, file or table names in any task text
+PASS A7 2 overdue tasks, all assigned (none in the pool) -- Подготовить набор данных для проверки заказов | Исправить замечания по доступности сайта
+PASS A8 no invitation was ever sent for the seeded employees -- no invitation row
+PASS A9 62 work sessions in 5 weeks of history for all 10 employees; total tracked time equals the sum of the sessions -- 62 sessions, 127:50:00
+PASS A10 no session overlaps another of the same employee, none is running, none falls on a weekend
+PASS A11 dashboard figures: 10 employees, 0 working, 8 paused, 2 idle, 12 open, 14 completed, 2 overdue, 127:50:00 tracked -- [10,0,8,2,2,"127:50:00"]
+PASS A12 tracked time = report = daily buckets = per-employee = per-project = workload
+PASS A13 every project has time and tasks; task status buckets add up to 48
+PASS B1 Manager opens without Google sign-in -- https://script.google.com/macros/s/<id>/exec
+PASS B2 the opening dashboard (last 14 days) shows the scenario figures -- 2026-10-18 10|0|8|12|14|2|127:50:00
+PASS B3 chart, donut, status bars, workload and both activity feeds are drawn with data
+PASS B4 no demonstration wording on "overview" (ru)
+PASS B5 no English interface text left on "overview" in Russian
+PASS B4 no demonstration wording on "projects" (ru)
+PASS B5 no English interface text left on "projects" in Russian
+PASS B4 no demonstration wording on "tasks" (ru)
+PASS B5 no English interface text left on "tasks" in Russian
+PASS B4 no demonstration wording on "employees" (ru)
+PASS B5 no English interface text left on "employees" in Russian
+PASS B4 no demonstration wording on "reports" (ru)
+PASS B5 no English interface text left on "reports" in Russian
+PASS B4 no demonstration wording on "history" (ru)
+PASS B5 no English interface text left on "history" in Russian
+PASS B4 no demonstration wording on "settings" (ru)
+PASS B5 no English interface text left on "settings" in Russian
+PASS B4 no demonstration wording on "overview" (en)
+PASS B4 no demonstration wording on "projects" (en)
+PASS B4 no demonstration wording on "tasks" (en)
+PASS B4 no demonstration wording on "employees" (en)
+PASS B4 no demonstration wording on "reports" (en)
+PASS B4 no demonstration wording on "history" (en)
+PASS B4 no demonstration wording on "settings" (en)
+PASS B6 the language choice survives a reload
+PASS C1 the Employees view lists all 10 people with their status
+PASS C2 search is case-insensitive over Russian names
+PASS C3 search by e-mail
+PASS C4 an empty result shows a clear message
+PASS D1 each of the 10 workspace links opens the right employee: same person, exactly their own tasks, their name shown, no e-mail, no Manager console, no demonstration text -- 10 ok
+PASS D2 the 10 workspace tokens are distinct
+PASS E1 Available tasks shows exactly the 20 pool tasks in Russian -- 20 cards
+PASS E2 the pool can be searched -- Проверить безопасность веб-приложения ClientHub
+PASS E3 the pool can be filtered by project -- 5 in Разработка программного обеспечения
+PASS E4 the pool can be filtered by priority -- 8 high
+PASS E5 every pool card offers a Take button to an eligible employee (nothing was taken in this read-only run) -- 20
+PASS E6 My tasks shows all of this employee's tasks (open and finished) -- 1/1
+PASS E7 Work history lists this employee's sessions -- 3 rows, 3 in the 30-day report
+PASS E8 Comments view opens
+PASS E9 the overview shows either the current task or the "no current task" state, and no timer is running -- {"box":false,"empty":true,"task":"Загрузка…","timer":"00:00:00"}
+PASS E10 refreshing a workspace three times creates no session -- 62 -> 62
+PASS F1 a client-supplied employee id, foreign task id or guessed token never opens another employee's data -- ERR:Error: @@invalid_link@@{ | ERR:Error: @@task_not_yours@ | ERR:Error: @@task_not_yours@ | ERR:Error: @@task_not_yours@ | ERR:Error: @@task_not_availa | ERR:Error: @@invalid_link@@{
+PASS F2 an employee's data contains no other employee's token, e-mail or tasks, and their comments are only on their own tasks
+PASS G1 the Tasks table lists all 48 tasks -- 48
+PASS G2 filter by status "available" shows the 20 pool tasks -- 20
+PASS G3 filter by priority within the pool -- 8
+PASS G4 filter by project -- 16
+PASS G5 filter by employee -- 1
+PASS G6 filter "unassigned" shows pool and draft tasks only (22) -- 22
+PASS G7 filter by deadline "overdue" shows exactly the 2 overdue tasks -- 2
+PASS G8 text search over title and description -- 1
+PASS G9 no matching task shows a clear message
+PASS G10 task details show description, project, priority, owner, activity history and comments in Russian -- Установить обновления безопасности на серверах Завершена Высокий Плановое обновление всех 
+PASS G11 the task history is ordered and consistent (created first, completed last for finished tasks, tracked time = sum of sessions) -- completed
+PASS H1 the 30-day report lists all 10 employees; their totals add up to 127:50:00 -- 127:50:00
+PASS H2 CSV (ru): BOM, localized headers incl. project, one line per session (62 + header) -- lines=63
+PASS H3 CSV has no raw formula cell and no demonstration wording
+PASS H4 the browser downloaded the .csv and it equals the server's CSV -- working-time-report_2026-10-01_2026-10-31.csv
+PASS H5 CSV for one employee (en) has their sessions only, English headers -- rows=3
+PASS H6 date boundaries: a single day equals the sum of its sessions; adjacent days add up to the 3-day range; today has no time yet -- 2026-10-19 13:15:00
+PASS H7 invalid, reversed and over-long date ranges are refused with translatable messages -- ERR:Error: @@date_invalid@@{}@ | ERR:Error: @@date_order@@{}@@F | ERR:Error: @@range_too_long@@{ | ERR:Error: @@date_format@@{}@@
+PASS H1b the Reports view shows the empty state for a period before any work -- В выбранном периоде активности нет.
+PASS H1b the Reports view shows the empty state for today, when nobody has worked yet -- В выбранном периоде активности нет.
+PASS H8 Work history lists every session of the period (62) -- 62
+PASS H9 an empty period shows a clear empty state (history)
+PASS I1 an invalid e-mail is stopped by the form (native validation, nothing submitted) and refused by the server with a translatable code -- {"valid":false,"typeMismatch":true,"status":""} | ERR:Error: @@invalid_email@@{}@@A valid email addr
+PASS I2 a duplicate e-mail is refused with a readable message -- Сотрудник с такой электронной почтой уже существует.
+PASS I3 nothing was created by the refused submissions -- 10 employees, 48 tasks
+PASS J1 no horizontal page overflow on any Manager or employee view at desktop, tablet and mobile widths (with the full dataset)
+PASS J2 on mobile the sidebar hides behind a menu button that opens and closes it -- {"offscreen":true,"shown":true,"open":true,"onscreen":true,"closed":true}
+PASS K1 internal functions (task moves, comments, seeding, cleanup, spreadsheet access, …) are not callable from the client -- 24 probed
+PASS K2 owner-only functions refuse an anonymous caller (not armed) and changed nothing -- runTests => ERR:Error: runTests is an ow | resetDemoData => ERR:Error: resetDemoDat | seedAssessmentData => ERR:Error: seedAss | cleanupTestArtifacts => ERR:Error: clean | enableOpenAccess => ERR:Error: enableOpe | disableOpenAccess => ERR:Error: disableO
+PASS K3 the spreadsheet id appears in no page, frame or API response
+PASS K4 no workspace token in any manager list, dashboard, report, task or project response
+PASS K5 a token is refused where an employee id is expected -- ERR:Error: @@employee_not_found@@{}@@Employee not 
+PASS K6 error responses carry no stack traces or file names
+PASS K7 the e-mail subsystem reports its state only (kill switch / caps are enforced server-side) -- {"email":{"available":true,"enabled":true,"remaining":100}}
+PASS K8 no JavaScript errors were raised by any page during the run
+
+91/91 checks passed
