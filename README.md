@@ -409,7 +409,7 @@ mail service is replaced by a test double): Project Settings → Script properti
 | Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (including its simulated `runTests`) | **68/68** |
 | Deployed app (v8), signed-out headless Chrome | `tests/live/accept.js` (write phase) | **110/110** |
 | Deployed app (v8), seeded data, signed-out headless Chrome | `tests/live/accept-data.js` (read phase, `docs/live-read-phase-seeded-v8.log`) | **89/89** |
-| Real Apps Script editor | `runTests` | **1st run (13:26) failed** (`Document ... is missing`, defect 9). **2nd run, after the batching fix: 53/53 passed in 254 s**: the owner's execution log, reported to this session and not re-executed by the automation. It contained one `invitation send failed: Service invoked too many times for one day: email.` line, which is the failure-path test's *simulated* error (defect 10). A re-run with the fix for that line is pending |
+| Real Apps Script editor | `runTests` | **53/53 passed in 262 s** on the code at commit `e33b8a0` — the owner's execution log (`docs/real-runTests-2026-10-31.log`), reported to this session and not executed by the automation. The only error-level line is the intentional `invitation send failed: SIMULATED (test double): …`, announced by a `NOTE:` line. Earlier real runs: 1st failed (`Document ... is missing`, defect 9); 2nd 53/53 in 254 s with the then-unmarked simulated line (defect 10) |
 
 ## Live verification of the deployed URL
 
