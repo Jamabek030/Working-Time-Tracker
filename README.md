@@ -408,8 +408,8 @@ mail service is replaced by a test double): Project Settings → Script properti
 | Local Node | pure / analytics / tasks / i18n / dataset / wording / surface | **50 / 26 / 16 / 26 / 17 / 6 / 25** passed |
 | Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (including its simulated `runTests`) | **60/60** |
 | Deployed app (v8), signed-out headless Chrome | `tests/live/accept.js` (write phase) | **110/110** |
-| Deployed app, seeded data | `tests/live/accept-data.js` (read phase) | **pending** (needs the owner to run `resetDemoData`) |
-| Real Apps Script editor | `runTests` | **pending** (needs the owner to arm `ADMIN_MODE=runTests`; the simulation is not a substitute) |
+| Deployed app (v8), seeded data, signed-out headless Chrome | `tests/live/accept-data.js` (read phase, `docs/live-read-phase-seeded-v8.log`) | **89/89** |
+| Real Apps Script editor | `runTests` | **Not verified by the automation.** It needs the owner to arm `ADMIN_MODE=runTests` in a signed-in editor; no log was supplied to this session, and the simulation is not a substitute |
 
 ## Live verification of the deployed URL
 
@@ -436,7 +436,7 @@ real condition or scoping the check, and the application was not changed for any
 | Responsive | No horizontal overflow on any Manager or employee view at 1366, 820 and 390 px; mobile menu opens and closes; `aria-current`, labelled selector, skip link, focus-visible rule |
 | Security | Internal functions not callable; owner-only functions refuse (`not armed`); spreadsheet id and workspace tokens absent from every page, frame and response; id/token not interchangeable; no stack traces; no JavaScript error on any page |
 
-The read-only run over the seeded dataset is **pending** the owner loading it.
+**Seeded dataset (owner ran `resetDemoData`; 89/89).** Exactly 10 employees (all `example.com`, none left over), 5 projects, 48 tasks with the intended distribution, 20 distinct Russian pool tasks, 62 sessions totalling 127:50:00 that never overlap and fall only on weekdays; the dashboard opens on the last 14 days with the scenario figures and every aggregate reconciles with the report; **each of the 10 workspace links opens the right employee** (same person, exactly their own tasks, no e-mail, no Manager console); the pool shows 20 cards in the Employee UI with search/project/priority filters and a Take button on each (nothing was taken, so the claim itself is covered by the write-phase run and the simulator, not by this run); a foreign employee id, task id or guessed token is refused; three refreshes create no session; Tasks filters (20 / by priority / project / employee / 22 unassigned / 2 overdue / text), details with comments, reports, CSV (62 lines + header), date boundaries, invalid/reversed/over-long ranges, validation states, responsive at three widths, security probes, no demonstration wording in either language.
 
 **Not verified:** a real email delivery; Safari/Firefox or a physical phone;
 visual fidelity beyond the three emulated widths; concurrent anonymous load or

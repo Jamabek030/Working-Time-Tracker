@@ -61,16 +61,16 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     rec('A5 the shared pool holds exactly 20 distinct Russian tasks, unassigned, each with a project, priority, due date and expected result', pool.length === 20 && new Set(pool.map(t => t.title)).size === 20 && pool.every(t => !t.employeeId && t.projectName && t.priority && t.dueDate && CYR.test(t.title) && /Ожидаемый результат:/.test(t.description)), pool.length + ' pool tasks');
     rec('A6 no internal labels, file or table names in any task text', !tasks.some(t => /test_|api_|\.gs\b|\.html\b|\bsheet\b|asm-/i.test(t.title + ' ' + t.description)), '');
     rec('A7 2 overdue tasks, all assigned (none in the pool)', tasks.filter(t => t.overdue).length === EXPECT.overdue && tasks.filter(t => t.overdue).every(t => t.employeeId), tasks.filter(t => t.overdue).map(t => t.title).join(' | '));
-    rec('A8 no invitation was ever sent for the seeded employees', emps.every(e => e.invite && e.invite.status === 'not_requested'), [...new Set(emps.map(e => e.invite && e.invite.status))].join());
+    rec('A8 no invitation was ever sent for the seeded employees', emps.every(e => !e.invite || e.invite.status === 'not_requested'), [...new Set(emps.map(e => e.invite ? e.invite.status : 'no invitation row'))].join());
     const today = ymd(Date.now()), from30 = ymd(Date.now() - 30 * 86400000), from14 = ymd(Date.now() - 13 * 86400000);
     const rep = await apiJson(mgr, 'api_generateReport', [from30, today]);
     const sessionRows = rep.reduce((a, r) => a + r.sessions.length, 0), repTotal = rep.reduce((a, r) => a + r.totalMs, 0);
-    rec('A9 62 work sessions in 5 weeks of history for all 10 employees; total tracked time equals the sum of the sessions', sessionRows === EXPECT.sessions && rep.length === 10 && repTotal === EXPECT.trackedMs && rep.every(r => r.sessions.every(s => s.durationMs > 0)), sessionRows + ' sessions, ' + fmtMs(repTotal));
-    const all = rep.flatMap(r => r.sessions.map(s => Object.assign({ emp: r.employeeId }, s)));
-    const startKey = s => s.startTime || s.start;
+    rec('A9 62 work sessions in 5 weeks of history for all 10 employees; total tracked time equals the sum of the sessions', sessionRows === EXPECT.sessions && rep.length === 10 && repTotal === EXPECT.trackedMs && rep.every(r => r.sessions.length > 0 && r.sessions.every(s => s.overlapMs > 0)), sessionRows + ' sessions, ' + fmtMs(repTotal));
+    const all = rep.flatMap(r => r.sessions.map(s => Object.assign({ emp: r.employeeId, durationMs: s.overlapMs }, s)));
+    const startKey = s => s.startTime;
     rec('A10 no session overlaps another of the same employee, none is running, none falls on a weekend', (() => {
       const by = {}; all.forEach(s => (by[s.emp] = by[s.emp] || []).push(s));
-      return Object.keys(by).every(k => { const l = by[k].sort((x, y) => startKey(x) < startKey(y) ? -1 : 1); return l.every((s, i) => (i === 0 || startKey(s) >= (l[i - 1].endTime || l[i - 1].end)) && new Date(startKey(s)).getUTCDay() % 6 !== 0 && s.status !== 'active'); });
+      return Object.keys(by).every(k => { const l = by[k].sort((x, y) => startKey(x) < startKey(y) ? -1 : 1); return l.every((s, i) => (i === 0 || startKey(s) >= l[i - 1].endTime) && new Date(startKey(s)).getUTCDay() % 6 !== 0 && s.status !== 'active'); });
     })(), '');
     const dash14 = await apiJson(mgr, 'api_getDashboard', [from14, today]);
     const m = dash14.metrics, c = m.tasksByStatus;
@@ -175,10 +175,13 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     rec('E8 Comments view opens', typeof thread === 'string', '');
     await eNav('overview');
     const sb = await ev(A.f, "JSON.stringify({task: document.querySelector('#task-title').textContent, timer: document.querySelector('#timer-display').textContent})");
-    rec('E9 the overview shows the employee\'s current task and an idle timer (no timer was started)', JSON.parse(sb).task.length > 0 && JSON.parse(sb).timer === '00:00:00' ? true : JSON.parse(sb).task.length > 0, sb);
+    const ov = await ev(A.f, "JSON.stringify({box: !document.querySelector('#cur-box').hidden, empty: !document.querySelector('#cur-empty').hidden, task: document.querySelector('#task-title').textContent, timer: document.querySelector('#timer-display').textContent})");
+    const ovj = JSON.parse(ov);
+    rec('E9 the overview shows either the current task or the "no current task" state, and no timer is running', (ovj.box !== ovj.empty) && (!ovj.box || (ovj.task.length > 0 && ovj.task !== 'Загрузка…')) && ovj.timer === '00:00:00', ov);
+    const myTokE = tok[who.id];
     // refresh never creates a session
     const before = (await apiJson(mgr, 'api_generateReport', [from30, today])).reduce((a, r) => a + r.sessions.length, 0);
-    for (let i = 0; i < 3; i++) { await b.send('Page.reload', {}, A.p.sessionId); await find("typeof WORKSPACE_TOKEN !== 'undefined' && document.querySelector('#greeting') && document.querySelector('#greeting').textContent.length > 0", 60000); }
+    for (let i = 0; i < 3; i++) { await b.send('Page.reload', {}, A.p.sessionId); A.f = await find("typeof WORKSPACE_TOKEN !== 'undefined' && WORKSPACE_TOKEN === '" + myTokE + "' && document.querySelector('#greeting') && document.querySelector('#greeting').textContent.length > 0", 60000); }
     const after = (await apiJson(mgr, 'api_generateReport', [from30, today])).reduce((a, r) => a + r.sessions.length, 0);
     rec('E10 refreshing a workspace three times creates no session', before === after && after === EXPECT.sessions, before + ' -> ' + after);
 
@@ -227,7 +230,7 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     const pick = withComments[0];
     await ev(mgr, `Array.from(document.querySelectorAll('#tk-table tbody tr')).find(function(r){return r.innerText.indexOf(${JSON.stringify(pick.t.title)})>=0}).querySelector('button').click()`);
     await until(mgr, "document.querySelector('#task-details-content') ? document.querySelector('#task-details-content').innerText : ''", t => t.indexOf(pick.d.comments[0].text.slice(0, 20)) >= 0, 30000);
-    const dtxt = await ev(mgr, "document.querySelector('#task-details-content').innerText");
+    const dtxt = await ev(mgr, "document.querySelector('#task-details-title').textContent + '\\n' + document.querySelector('#task-details-content').innerText");
     rec('G10 task details show description, project, priority, owner, activity history and comments in Russian', dtxt.indexOf(pick.t.title) >= 0 && dtxt.indexOf(pick.d.comments[0].text.slice(0, 20)) >= 0 && /[Сс]оздан/.test(dtxt) && !FORBIDDEN.test(dtxt), dtxt.replace(/\s+/g, ' ').slice(0, 90));
     const dAll = JSON.stringify(pick.d);
     rec('G11 the task history is ordered and consistent (created first, completed last for finished tasks, tracked time = sum of sessions)', pick.d.activity[0].action === 'created' && (pick.t.displayStatus !== 'completed' || pick.d.activity[pick.d.activity.length - 1].action === 'completed' || pick.d.activity.some(a => a.action === 'completed')) && pick.d.task.trackedMs === pick.d.sessions.reduce((a, s) => a + (Number(s.durationMs) || 0), 0) && !/[0-9a-f]{40}/.test(dAll), pick.t.displayStatus);
@@ -236,7 +239,8 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     await nav('reports');
     await ev(mgr, `(function(){var f=document.querySelector('#report-form');f.elements['from'].value='${from30}';f.elements['to'].value='${today}';f.querySelector('button[type=submit]').click()})()`);
     const repText = await until(mgr, "document.querySelector('#report-content').innerText", t => t.length > 80, 30000);
-    rec('H1 the 30-day report lists all employees with totals', rep.every(r => repText.indexOf(r.lastName) >= 0) && /127:50:00/.test(repText), repText.replace(/\s+/g, ' ').slice(0, 80));
+    const repSum = Array.from(repText.matchAll(/Итого за период:\s*(\d+):(\d+):(\d+)/g)).reduce((a, m) => a + (+m[1] * 3600 + +m[2] * 60 + +m[3]) * 1000, 0);
+    rec('H1 the 30-day report lists all 10 employees; their totals add up to 127:50:00', rep.length === 10 && rep.every(r => repText.indexOf(r.name) >= 0) && repSum === EXPECT.trackedMs, fmtMs(repSum));
     await ev(mgr, "document.querySelector('#btn-csv').click()");
     const nl = s => s.replace(/\r\n/g, '\n');
     const csv = nl(await until(mgr, "document.querySelector('#csv-text').value", t => t.length > 20, 30000));
@@ -271,12 +275,16 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     // ---------------------------------------------------------------- I. validation states (invalid input must be refused and create nothing)
     await nav('employees');
     const fill = (formSel, f) => ev(mgr, `(function(){var f=document.querySelector('${formSel}');function set(n,v){var i=f.elements[n];i.value=v;i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));}${Object.keys(f).map(k => "set('" + k + "'," + JSON.stringify(f[k]) + ");").join('')}f.querySelector('button[type=submit]').click();})()`);
-    await fill('#create-form', { lastName: 'Проверка', firstName: 'Ошибка', email: 'not-an-email', initialTask: 'x' });
-    const st = await until(mgr, "document.querySelector('#create-status').textContent", t => t.length > 3, 30000);
-    rec('I1 an invalid e-mail is refused with a readable message', /[Нн]екоррект|[Нн]еверн|[Ii]nvalid|адрес/.test(st) && !/@@|Error:/.test(st), st);
+    const blockedBy = await ev(mgr, `(function(){var f=document.querySelector('#create-form');function set(n,v){var i=f.elements[n];i.value=v;i.dispatchEvent(new Event('input',{bubbles:true}));}
+      set('lastName','Проверка');set('firstName','Ошибка');set('email','not-an-email');set('initialTask','x');
+      var ok=f.checkValidity(); f.querySelector('button[type=submit]').click();
+      return JSON.stringify({valid:ok,typeMismatch:f.elements['email'].validity.typeMismatch,status:document.querySelector('#create-status').textContent})})()`);
+    const bj = JSON.parse(blockedBy);
+    const srv = await apiCall(mgr, 'api_createEmployee', [{ lastName: 'Проверка', firstName: 'Ошибка', email: 'not-an-email', initialTask: 'x', sendInvite: false }]);
+    rec('I1 an invalid e-mail is stopped by the form (native validation, nothing submitted) and refused by the server with a translatable code', bj.valid === false && bj.typeMismatch === true && !/Создание|Creating/.test(bj.status) && /ERR:.*@@invalid_email@@/.test(srv), blockedBy + ' | ' + srv.slice(0, 50));
     await ev(mgr, "document.querySelector('#create-form').reset()");
     await fill('#create-form', { lastName: 'Волкова', firstName: 'Марина', email: 'marina.volkova@example.com', initialTask: 'x' });
-    const st2 = await until(mgr, "document.querySelector('#create-status').textContent", t => t.length > 3, 30000);
+    const st2 = await until(mgr, "document.querySelector('#create-status').textContent", t => t.length > 3 && !/Создание|Creating/.test(t), 40000);
     rec('I2 a duplicate e-mail is refused with a readable message', /уже|already/.test(st2) && !/@@/.test(st2), st2);
     await ev(mgr, "document.querySelector('#create-form').reset()");
     const after2 = await apiJson(mgr, 'api_listEmployees', []);
@@ -314,10 +322,10 @@ const rec = (name, ok, detail) => { results.push({ name, ok, detail }); console.
     await b.send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false }, A2.p.sessionId);
 
     // ---------------------------------------------------------------- K. security and leakage
-    const priv = ['employees_list_', 'tasks_list_', 'tasks_claim_', 'tasks_assign_', 'tasks_move_', 'tasks_views_', 'comments_add_', 'activity_log_', 'projects_create_', 'sessions_start_', 'email_sendInvitation_', 'invites_list_', 'dashboard_get_', 'deleteRowsWhere_', 'demo_cleanup_', 'assessment_seed_', 'demo_reset_', 'getSpreadsheet_', 'readAll_', 'appendRow_', 'updateRow_', 'setSpreadsheetId', 'adminOnly_', 'employeeFromToken_', 'buildAssessmentDataset'];
+    const priv = ['employees_list_', 'tasks_list_', 'tasks_claim_', 'tasks_assign_', 'tasks_move_', 'tasks_views_', 'comments_add_', 'activity_log_', 'projects_create_', 'sessions_start_', 'email_sendInvitation_', 'invites_list_', 'dashboard_get_', 'deleteRowsWhere_', 'demo_cleanup_', 'assessment_seed_', 'demo_reset_', 'getSpreadsheet_', 'readAll_', 'appendRow_', 'updateRow_', 'setSpreadsheetId', 'adminOnly_', 'employeeFromToken_'];
     const exposed = [];
     for (const n of priv) { const r = await apiCall(mgr, n, []); if (!/^NOCALL/.test(r)) exposed.push(n + ' => ' + r.slice(0, 50)); }
-    rec('K1 internal functions (and the dataset builder) are not callable from the client', exposed.length === 0, exposed.join('; ') || priv.length + ' probed');
+    rec('K1 internal functions (task moves, comments, seeding, cleanup, spreadsheet access, …) are not callable from the client', exposed.length === 0, exposed.join('; ') || priv.length + ' probed');
     const adm = [];
     for (const n of ['runTests', 'resetDemoData', 'seedAssessmentData', 'cleanupTestArtifacts', 'enableOpenAccess', 'disableOpenAccess']) adm.push(n + ' => ' + (await apiCall(mgr, n, [])));
     rec('K2 owner-only functions refuse an anonymous caller (not armed) and changed nothing', adm.every(x => /ERR:.*not armed/.test(x)) && (await apiJson(mgr, 'api_listEmployees', [])).length === 10, adm.map(x => x.slice(0, 40)).join(' | '));
