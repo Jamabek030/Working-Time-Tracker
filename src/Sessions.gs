@@ -34,13 +34,22 @@ function sessions_findActive_(employeeId, ctx) {
   return null;
 }
 
-function sessions_start_(employeeId, ctx) {
+// Starts (or resumes) a timer. With taskId the timer runs on that task, which must
+// belong to the employee and still be active; without it the employee's current
+// task is used (single-task behaviour). At most one timer runs per employee.
+function sessions_start_(employeeId, ctx, taskId) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var task = tasks_getActive_(employeeId, ctx);
-    if (!task) throw UserError('No active task assigned.');
+    var task;
+    if (taskId) {
+      task = tasks_requireOwned_(taskId, employeeId, ctx);
+      if (task.status !== 'active') throw UserError('This task cannot be worked on in its current state.');
+    } else {
+      task = tasks_currentFor_(employeeId, ctx);
+      if (!task) throw UserError('No active task assigned.');
+    }
     var active = sessions_findActive_(employeeId, ctx);
     if (active) throw UserError('A session is already running.');
     var session = {
@@ -72,20 +81,29 @@ function sessions_pause_(employeeId, ctx) {
   }
 }
 
-function sessions_resume_(employeeId, ctx) {
+function sessions_resume_(employeeId, ctx, taskId) {
   // Same transition as start, but called via a different button on the UI.
-  return sessions_start_(employeeId, ctx);
+  return sessions_start_(employeeId, ctx, taskId);
 }
 
-function sessions_finish_(employeeId, ctx) {
+// Finishes a task: closes its running timer (if any) as completed and marks the
+// task completed. With taskId that task is finished (it must belong to the
+// employee); without it the employee's current task is.
+function sessions_finish_(employeeId, ctx, taskId) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var task = tasks_getActive_(employeeId, ctx);
-    if (!task) throw UserError('No active task to finish.');
+    var task;
+    if (taskId) {
+      task = tasks_requireOwned_(taskId, employeeId, ctx);
+      if (task.status !== 'active') throw UserError('This task cannot be worked on in its current state.');
+    } else {
+      task = tasks_currentFor_(employeeId, ctx);
+      if (!task) throw UserError('No active task to finish.');
+    }
     var active = sessions_findActive_(employeeId, ctx);
-    if (active) closeSession_(active, 'completed', ctx);
+    if (active && active.taskId === task.id) closeSession_(active, 'completed', ctx);
     tasks_updateStatus_(task.id, 'completed', ctx);
     return { finishedTaskId: task.id };
   } finally {

@@ -11,7 +11,10 @@ var TEST_CTX = {
     EMPLOYEES: 'Test_Employees',
     TASKS: 'Test_Tasks',
     SESSIONS: 'Test_WorkSessions',
-    INVITES: 'Test_Invitations'
+    INVITES: 'Test_Invitations',
+    PROJECTS: 'Test_Projects',
+    COMMENTS: 'Test_TaskComments',
+    ACTIVITY: 'Test_TaskActivity'
   },
   headers: DEFAULT_CONFIG.HEADERS
 };
@@ -58,7 +61,20 @@ function runTests() {
     test_dashboardWorkingAndPausedStates_,
     test_csvExportMatchesReportAndNeutralisesFormulas_,
     test_cleanupRemovesOnlyAcceptanceArtifacts_,
-    test_cleanupRefusesWhenNotArmed_
+    test_cleanupRefusesWhenNotArmed_,
+    test_poolTaskLifecycleDraftPublishUnpublish_,
+    test_claimTaskOnlyOnce_,
+    test_cannotClaimDraftOrCompletedOrAssignedTasks_,
+    test_assignPoolTaskToEmployeeKeepsOneRow_,
+    test_assignKeepsRecordedWorkOfTheEmployee_,
+    test_transitionTableIsEnforced_,
+    test_employeeCannotUseAnotherEmployeesTask_,
+    test_oneTimerPerEmployeeAcrossSeveralTasks_,
+    test_derivedStatusAndOverdue_,
+    test_commentsAreOwnedAppendOnlyAndVisibleToTheManager_,
+    test_dashboardStatusCountsAndProjectTimeReconcile_,
+    test_tasksSheetGainsNewColumnsWithoutTouchingData_,
+    test_projectsRequireUniqueNames_
   ];
 
   // Create the Test_* sheets. ensureSheet_ runs idempotently.
@@ -88,7 +104,7 @@ function runTests() {
 
 function resetTestSheets_() {
   var ss = getSpreadsheet_();
-  [TEST_CTX.sheets.EMPLOYEES, TEST_CTX.sheets.TASKS, TEST_CTX.sheets.SESSIONS, TEST_CTX.sheets.INVITES].forEach(function (name) {
+  [TEST_CTX.sheets.EMPLOYEES, TEST_CTX.sheets.TASKS, TEST_CTX.sheets.SESSIONS, TEST_CTX.sheets.INVITES, TEST_CTX.sheets.PROJECTS, TEST_CTX.sheets.COMMENTS, TEST_CTX.sheets.ACTIVITY].forEach(function (name) {
     var sheet = ss.getSheetByName(name);
     if (!sheet) return;
     var lastRow = sheet.getLastRow();
@@ -643,4 +659,214 @@ function test_cleanupRemovesOnlyAcceptanceArtifacts_() {
 function test_cleanupRefusesWhenNotArmed_() {
   var err = assertThrows_(function () { cleanupTestArtifacts(); }, 'cleanupTestArtifacts must refuse while disarmed');
   assert_(/not armed/.test(err.message), 'reports it is not armed');
+}
+
+// --- projects, shared task pool, claiming, assignment, comments, activity ---------
+
+function newTask_(mode, title, extra) {
+  var status = mode === 'draft' ? 'draft' : (mode === 'pool' ? 'available' : 'active');
+  var data = { title: title || 'Pool task', status: status };
+  Object.keys(extra || {}).forEach(function (k) { data[k] = extra[k]; });
+  return tasks_create_(data, TEST_CTX);
+}
+
+function test_poolTaskLifecycleDraftPublishUnpublish_() {
+  var t = newTask_('draft', 'Backlog item');
+  assertEq_(t.status, 'draft');
+  assertEq_(tasks_views_(TEST_CTX, function (x) { return x.status === 'available'; }).length, 0, 'drafts are not in the pool');
+  tasks_publish_(t.id, undefined, TEST_CTX);
+  assertEq_(tasks_findById_(t.id, TEST_CTX).status, 'available');
+  assertThrows_(function () { tasks_publish_(t.id, undefined, TEST_CTX); }, 'a published task cannot be published again');
+  tasks_unpublish_(t.id, undefined, TEST_CTX);
+  assertEq_(tasks_findById_(t.id, TEST_CTX).status, 'draft');
+  var acts = activity_forTask_(t.id, TEST_CTX).map(function (a) { return a.action; });
+  assertEq_(acts.join(','), 'published,unpublished', 'every move is audited');
+}
+
+function test_claimTaskOnlyOnce_() {
+  var a = newPerson_('claim.a@corp-demo.io', 'Ann');
+  var b = newPerson_('claim.b@corp-demo.io', 'Ben');
+  var t = newTask_('pool', 'Shared work');
+  var before = tasks_list_(TEST_CTX).length;
+  var claimed = tasks_claim_(t.id, a, TEST_CTX);
+  assertEq_(claimed.employeeId, a.id);
+  assertEq_(claimed.status, 'active');
+  var err = assertThrows_(function () { tasks_claim_(t.id, b, TEST_CTX); }, 'second claim must fail');
+  assertEq_(err.userSafe, true);
+  assert_(/no longer available/.test(err.message), err.message);
+  assertEq_(tasks_findById_(t.id, TEST_CTX).employeeId, a.id, 'owner unchanged by the refused claim');
+  assertEq_(tasks_list_(TEST_CTX).length, before, 'no duplicate task row');
+  assertThrows_(function () { tasks_claim_(t.id, a, TEST_CTX); }, 'the owner cannot claim it again either');
+  assertEq_(activity_forTask_(t.id, TEST_CTX).map(function (x) { return x.action; }).join(','), 'claimed');
+}
+
+function test_cannotClaimDraftOrCompletedOrAssignedTasks_() {
+  var a = newPerson_('claim.c@corp-demo.io', 'Cy');
+  var b = newPerson_('claim.d@corp-demo.io', 'Di');
+  var draft = newTask_('draft', 'Not published');
+  assertThrows_(function () { tasks_claim_(draft.id, a, TEST_CTX); }, 'draft');
+  var mine = newTask_('assign', 'For Di', { employeeId: b.id });
+  assertThrows_(function () { tasks_claim_(mine.id, a, TEST_CTX); }, 'assigned to someone else');
+  assertThrows_(function () { tasks_claim_('no-such-task', a, TEST_CTX); }, 'unknown task');
+}
+
+function test_assignPoolTaskToEmployeeKeepsOneRow_() {
+  var a = newPerson_('assign.a@corp-demo.io', 'Ana');
+  var b = newPerson_('assign.b@corp-demo.io', 'Bo');
+  var t = newTask_('pool', 'Assign me', { priority: 'high', dueDate: '2030-01-01' });
+  var rows = tasks_list_(TEST_CTX).length;
+  tasks_assign_(t.id, a.id, undefined, TEST_CTX);
+  var after = tasks_findById_(t.id, TEST_CTX);
+  assertEq_([after.status, after.employeeId, after.priority, after.dueDate].join('|'), 'active|' + a.id + '|high|2030-01-01', 'same row, details kept');
+  assertEq_(tasks_list_(TEST_CTX).length, rows, 'no duplicate task');
+  assertEq_(tasks_views_(TEST_CTX, function (x) { return x.status === 'available'; }).length, 0, 'left the pool');
+  assertThrows_(function () { tasks_claim_(t.id, b, TEST_CTX); }, 'others cannot claim it');
+  assertThrows_(function () { tasks_assign_(t.id, b.id, undefined, TEST_CTX); }, 'an owned task cannot be re-assigned');
+  assertThrows_(function () { tasks_assign_(t.id, 'ghost', undefined, TEST_CTX); }, 'unknown employee');
+  var mine = tasks_forEmployee_(a.id, TEST_CTX).map(function (x) { return x.id; });
+  assert_(mine.indexOf(t.id) >= 0, 'appears in the employee\'s tasks');
+  assertEq_(activity_forTask_(t.id, TEST_CTX).map(function (x) { return x.action; }).join(','), 'assigned');
+}
+
+function test_assignKeepsRecordedWorkOfTheEmployee_() {
+  var a = newPerson_('assign.c@corp-demo.io', 'Cat');
+  var first = tasks_getActive_(a.id, TEST_CTX);
+  sessions_start_(a.id, TEST_CTX, first.id);
+  sessions_pause_(a.id, TEST_CTX);
+  var pool = newTask_('pool', 'Another');
+  tasks_assign_(pool.id, a.id, undefined, TEST_CTX);
+  assertEq_(sessions_forTask_(first.id, TEST_CTX).length, 1, 'earlier session intact');
+  assertEq_(tasks_findById_(first.id, TEST_CTX).status, 'active', 'earlier task not replaced or closed');
+}
+
+function test_transitionTableIsEnforced_() {
+  assertEq_(nextTaskStatus('available', 'claim'), 'active');
+  assertEq_(nextTaskStatus('active', 'claim'), null);
+  assertEq_(nextTaskStatus('completed', 'assign'), null);
+  assertEq_(nextTaskStatus('draft', 'complete'), null);
+  var e = newPerson_('trans.a@corp-demo.io', 'Tom');
+  var done = newTask_('assign', 'Finish me', { employeeId: e.id });
+  sessions_finish_(e.id, TEST_CTX, done.id);
+  assertEq_(tasks_findById_(done.id, TEST_CTX).status, 'completed');
+  assertThrows_(function () { sessions_start_(e.id, TEST_CTX, done.id); }, 'cannot work on a completed task');
+  assertThrows_(function () { tasks_assign_(done.id, e.id, undefined, TEST_CTX); }, 'cannot assign a completed task');
+  assertThrows_(function () { sessions_finish_(e.id, TEST_CTX, done.id); }, 'cannot finish twice');
+}
+
+function test_employeeCannotUseAnotherEmployeesTask_() {
+  var a = newPerson_('own.a@corp-demo.io', 'Al');
+  var b = newPerson_('own.b@corp-demo.io', 'Bea');
+  var bTask = tasks_getActive_(b.id, TEST_CTX);
+  var pool = newTask_('pool', 'In the pool');
+  [function () { sessions_start_(a.id, TEST_CTX, bTask.id); },
+   function () { sessions_finish_(a.id, TEST_CTX, bTask.id); },
+   function () { sessions_start_(a.id, TEST_CTX, pool.id); },
+   function () { tasks_requireOwned_(bTask.id, a.id, TEST_CTX); },
+   function () { comments_add_(tasks_requireOwned_(bTask.id, a.id, TEST_CTX), { type: 'employee', id: a.id, name: 'x' }, 'hi', TEST_CTX); }
+  ].forEach(function (fn, i) {
+    var err = assertThrows_(fn, 'attempt ' + i + ' must fail');
+    assertEq_(err.userSafe, true, 'attempt ' + i + ' reports a user-safe error');
+  });
+  assertEq_(sessions_forEmployee_(b.id, TEST_CTX).length, 0, 'nothing was recorded for the owner');
+  assertEq_(comments_forTask_(bTask.id, TEST_CTX).length, 0, 'no comment was written');
+}
+
+function test_oneTimerPerEmployeeAcrossSeveralTasks_() {
+  var e = newPerson_('multi.a@corp-demo.io', 'Max');
+  var t1 = tasks_getActive_(e.id, TEST_CTX);
+  var t2 = newTask_('assign', 'Second', { employeeId: e.id });
+  sessions_start_(e.id, TEST_CTX, t1.id);
+  assertThrows_(function () { sessions_start_(e.id, TEST_CTX, t2.id); }, 'a second timer must be refused');
+  patchSessionStart_(sessions_findActive_(e.id, TEST_CTX).id, 60000);
+  sessions_pause_(e.id, TEST_CTX);
+  sessions_start_(e.id, TEST_CTX, t2.id);
+  var views = tasks_views_(TEST_CTX, function (t) { return t.employeeId === e.id; });
+  var v1 = views.filter(function (v) { return v.id === t1.id; })[0], v2 = views.filter(function (v) { return v.id === t2.id; })[0];
+  assertEq_([v1.displayStatus, v2.displayStatus].join(','), 'paused,in_progress');
+  assert_(v1.trackedMs >= 60000 && v1.trackedMs < 120000, 'time stays with the first task: ' + v1.trackedMs);
+  sessions_finish_(e.id, TEST_CTX, t1.id);
+  assertEq_(sessions_findActive_(e.id, TEST_CTX).taskId, t2.id, 'finishing task 1 does not stop the timer of task 2');
+  assertEq_(tasks_findById_(t1.id, TEST_CTX).status, 'completed');
+}
+
+function test_derivedStatusAndOverdue_() {
+  var e = newPerson_('derive.a@corp-demo.io', 'Dee');
+  var t = newTask_('assign', 'Dated', { employeeId: e.id, dueDate: '2000-01-01' });
+  function view() { return tasks_views_(TEST_CTX, function (x) { return x.id === t.id; })[0]; }
+  assertEq_([view().displayStatus, view().overdue].join(','), 'assigned,true', 'past deadline is overdue');
+  sessions_start_(e.id, TEST_CTX, t.id);
+  assertEq_(view().displayStatus, 'in_progress');
+  sessions_pause_(e.id, TEST_CTX);
+  assertEq_(view().displayStatus, 'paused');
+  sessions_finish_(e.id, TEST_CTX, t.id);
+  assertEq_([view().displayStatus, view().overdue].join(','), 'completed,false', 'finished tasks are never overdue');
+  assertEq_(newTask_('pool', 'Far future', { dueDate: '2999-12-31' }).dueDate, '2999-12-31');
+  assertThrows_(function () { newTask_('pool', 'Bad date', { dueDate: '2026-02-30' }); }, 'impossible date');
+  assertThrows_(function () { newTask_('pool', 'Bad priority', { priority: 'urgent' }); }, 'unknown priority');
+}
+
+function test_commentsAreOwnedAppendOnlyAndVisibleToTheManager_() {
+  var e = newPerson_('com.a@corp-demo.io', 'Eve');
+  var o = newPerson_('com.b@corp-demo.io', 'Oli');
+  var t = tasks_getActive_(e.id, TEST_CTX);
+  comments_add_(tasks_requireOwned_(t.id, e.id, TEST_CTX), { type: 'employee', id: e.id, name: 'Eve Tester' }, '=SUM(1+1) <b>x</b>', TEST_CTX);
+  comments_add_(t, { type: 'manager', id: '' }, 'Thanks, please continue.', TEST_CTX);
+  var list = comments_forTask_(t.id, TEST_CTX);
+  assertEq_(list.length, 2);
+  assertEq_([list[0].authorType, list[0].authorId, list[0].authorName].join('|'), 'employee|' + e.id + '|Eve Tester');
+  assertEq_(list[0].text, '=SUM(1+1) <b>x</b>', 'stored as text and read back unchanged');
+  assertEq_([list[1].authorType, list[1].authorId].join('|'), 'manager|', 'manager replies are visible in the same thread');
+  assertThrows_(function () { comments_add_(t, { type: 'manager' }, '   ', TEST_CTX); }, 'empty comment');
+  assertThrows_(function () { comments_add_(t, { type: 'manager' }, new Array(1002).join('x'), TEST_CTX); }, 'too long');
+  assertThrows_(function () { tasks_requireOwned_(t.id, o.id, TEST_CTX); }, 'another employee cannot comment');
+  assertEq_(activity_forTask_(t.id, TEST_CTX).filter(function (a) { return a.action === 'commented'; }).length, 2, 'comments are audited');
+}
+
+function test_dashboardStatusCountsAndProjectTimeReconcile_() {
+  demo_seed_(TEST_CTX);
+  var now = Date.now();
+  var from = ymdUtc(now - 10 * 86400000), to = ymdUtc(now);
+  var d = dashboard_get_(from, to, TEST_CTX);
+  var m = d.metrics, c = m.tasksByStatus;
+  var sum = 0;
+  Object.keys(c).forEach(function (k) { sum += c[k]; });
+  assertEq_(sum, m.totalTasks, 'status buckets add up to the number of tasks');
+  assertEq_(m.totalTasks, tasks_list_(TEST_CTX).length, 'and to the task rows');
+  assertEq_([c.draft, c.available, c.paused, c.completed, c.replaced].join(','), '1,3,2,1,1', 'sample distribution');
+  assertEq_(m.overdueTasks, 1, 'one overdue task in the sample');
+  var byProject = 0;
+  d.byProject.forEach(function (p) { byProject += p.ms; });
+  assertEq_(byProject, m.trackedMs, 'time by project adds up to the tracked time');
+  var load = 0;
+  d.workload.forEach(function (w) { load += w.ms; });
+  assertEq_(load, m.trackedMs, 'workload adds up to the tracked time');
+  assert_(d.recentActivity.length > 0 && d.recentComments.length > 0, 'real activity and comments are listed');
+}
+
+function test_tasksSheetGainsNewColumnsWithoutTouchingData_() {
+  var ss = getSpreadsheet_();
+  var name = 'Test_Migrate';
+  var old = ss.getSheetByName(name);
+  if (old) ss.deleteSheet(old);
+  var sheet = ss.insertSheet(name);
+  try {
+    var legacy = DEFAULT_CONFIG.HEADERS.TASKS.slice(0, 6);
+    sheet.getRange(1, 1, 1, 6).setValues([legacy]);
+    sheet.getRange(2, 1, 1, 6).setValues([['id-1', 'emp-1', 'Old task', 'active', '2026-01-01T00:00:00.000Z', '']]);
+    ensureSheet_(ss, name, DEFAULT_CONFIG.HEADERS.TASKS);
+    ensureSheet_(ss, name, DEFAULT_CONFIG.HEADERS.TASKS); // idempotent
+    var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    assertEq_(header.join(','), DEFAULT_CONFIG.HEADERS.TASKS.join(','), 'new columns appended in canonical order, once');
+    assertEq_(sheet.getRange(2, 1, 1, 4).getValues()[0].join('|'), 'id-1|emp-1|Old task|active', 'existing row untouched');
+  } finally {
+    ss.deleteSheet(sheet);
+  }
+}
+
+function test_projectsRequireUniqueNames_() {
+  var p = projects_create_({ name: 'Alpha', description: 'first' }, TEST_CTX);
+  assertThrows_(function () { projects_create_({ name: ' alpha ' }, TEST_CTX); }, 'duplicate name (case-insensitive)');
+  assertThrows_(function () { projects_create_({ name: '' }, TEST_CTX); }, 'empty name');
+  assertThrows_(function () { newTask_('pool', 'Orphan', { projectId: 'no-such-project' }); }, 'unknown project');
+  assertEq_(newTask_('pool', 'In Alpha', { projectId: p.id }).projectId, p.id);
 }

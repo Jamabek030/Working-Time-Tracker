@@ -8,66 +8,162 @@
 </head>
 <body data-title-key="app.title">
 <a class="skip" href="#main" data-i18n="a11y.skip">Skip to content</a>
-<header class="app-header">
-  <div class="container header-row">
+<div class="app">
+  <aside class="sidebar" id="sidebar" aria-label="Navigation">
     <div class="brand">
       <span class="logo" aria-hidden="true">WT</span>
-      <div>
-        <h1><span data-i18n="ws.heading">Workspace</span> — <?= employee.firstName ?> <?= employee.lastName ?></h1>
-        <p class="subtitle" data-i18n="app.subtitle.employee">Employee workspace</p>
+      <div class="brand-text">
+        <div class="brand-name" data-i18n="app.title">Working Time Tracker</div>
+        <div class="brand-sub" data-i18n="app.subtitle.employee">Employee workspace</div>
       </div>
     </div>
-    <div class="header-tools">
+    <nav class="nav" aria-label="Sections">
+      <button type="button" class="nav-item active" data-view="overview" aria-current="page"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg><span data-i18n="nav.overview">Overview</span></button>
+      <button type="button" class="nav-item" data-view="mytasks"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span data-i18n="nav.myTasks">My tasks</span></button>
+      <button type="button" class="nav-item" data-view="available"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg><span data-i18n="nav.available">Available tasks</span></button>
+      <button type="button" class="nav-item" data-view="history"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><span data-i18n="nav.history">Work history</span></button>
+      <button type="button" class="nav-item" data-view="comments"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span data-i18n="nav.comments">Comments</span></button>
+    </nav>
+    <div class="side-foot">
+      <div class="profile">
+        <span class="avatar" id="avatar" aria-hidden="true"><?= employee.firstName.charAt(0) ?><?= employee.lastName.charAt(0) ?></span>
+        <div class="profile-text"><div class="profile-name"><?= employee.firstName ?> <?= employee.lastName ?></div><div class="profile-sub" data-i18n="role.employee">Employee</div></div>
+      </div>
       <label for="lang-select" class="sr-only" data-i18n="lang.label">Language</label>
       <select id="lang-select" class="lang-select">
         <option value="ru">Русский</option>
         <option value="en">English</option>
       </select>
     </div>
-  </div>
-  <div class="container"><div class="notice" data-i18n="ws.notice">Personal workspace link. Anyone who has this link can use this workspace, so keep it private. If the link leaks, ask your manager to rotate it. This page cannot open the Manager console.</div></div>
-</header>
-<main id="main" class="container">
-  <div class="card">
-    <div class="muted small" data-i18n="ws.currentTask">Current task</div>
-    <h2 id="task-title" class="task-big" data-i18n="common.loading">Loading…</h2>
-    <div class="timer-row">
-      <div class="timer-display" id="timer-display" role="timer" aria-live="off">00:00:00</div>
-      <div class="actions">
-        <button type="button" id="btn-start" class="primary" hidden data-i18n="ws.start">Start</button>
-        <button type="button" id="btn-pause" class="warn" hidden data-i18n="ws.pause">Pause</button>
-        <button type="button" id="btn-resume" class="primary" hidden data-i18n="ws.resume">Resume</button>
-        <button type="button" id="btn-finish" class="danger" hidden data-i18n="ws.finish">Finish task</button>
-      </div>
-    </div>
-    <div id="status" class="status" role="status" aria-live="polite"></div>
-  </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
 
-  <div class="card">
-    <h2 data-i18n="ws.history">Work history</h2>
-    <div id="history-loading" class="status" data-i18n="common.loading">Loading…</div>
-    <div id="history-empty" class="status" hidden data-i18n="ws.historyEmpty">No work sessions recorded yet.</div>
-    <div class="table-wrap"><table id="history-table" class="stack" hidden>
-      <thead>
-        <tr>
-          <th data-i18n="col.task">Task</th>
-          <th data-i18n="col.start">Start</th>
-          <th data-i18n="col.end">End</th>
-          <th data-i18n="col.duration">Duration</th>
-          <th data-i18n="col.status">Status</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table></div>
+  <div class="main-col">
+    <header class="topbar">
+      <button type="button" class="menu-btn" id="menu-btn" aria-controls="sidebar" aria-expanded="false" data-i18n-aria="nav.menu" aria-label="Menu"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/></svg></button>
+      <h1 id="view-title">Overview</h1>
+    </header>
+    <div class="content-pad"><div class="notice" data-i18n="ws.notice">Personal workspace link. Anyone who has this link can use this workspace, so keep it private. If your link leaks, ask your manager to replace it. This page cannot open the Manager console.</div></div>
+
+    <main id="main" class="content">
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+
+      <!-- ===== Overview ===== -->
+      <section id="view-overview" class="view active">
+        <div class="greeting">
+          <h2 id="greeting" class="no-margin"></h2>
+          <p class="muted" id="today-date"></p>
+        </div>
+        <div class="cols cols-wide">
+          <div class="card">
+            <h2 data-i18n="ws.currentTask">Current task</h2>
+            <div id="cur-empty" class="empty" hidden>
+              <span data-i18n="ws.noCurrent">You have no task yet. Take one from the shared pool or wait for the manager to assign one.</span>
+              <button type="button" class="secondary" id="btn-goto-available" data-i18n="nav.available">Available tasks</button>
+            </div>
+            <div id="cur-box">
+              <div class="task-big" id="task-title" data-i18n="common.loading">Loading…</div>
+              <div class="badges" id="cur-meta"></div>
+              <div class="timer-row">
+                <div class="timer-display" id="timer-display" role="timer" aria-live="off">00:00:00</div>
+                <div class="actions">
+                  <button type="button" id="btn-start" class="primary" hidden data-i18n="ws.start">Start</button>
+                  <button type="button" id="btn-pause" class="warn" hidden data-i18n="ws.pause">Pause</button>
+                  <button type="button" id="btn-resume" class="primary" hidden data-i18n="ws.resume">Resume</button>
+                  <button type="button" id="btn-finish" class="danger" hidden data-i18n="ws.finish">Finish task</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <h2 data-i18n="ws.today">Today</h2>
+            <dl class="facts big">
+              <dt data-i18n="ws.todayTime">Tracked time</dt><dd id="today-time">00:00:00</dd>
+              <dt data-i18n="ws.todayDone">Tasks completed</dt><dd id="today-done">0</dd>
+              <dt data-i18n="ws.openTasks">Open tasks</dt><dd id="open-count">0</dd>
+            </dl>
+          </div>
+        </div>
+        <div class="cols">
+          <div class="card">
+            <div class="row-between"><h2 class="no-margin" data-i18n="nav.myTasks">My tasks</h2><button type="button" class="link-btn" id="btn-all-tasks" data-i18n="ws.viewAll">View all</button></div>
+            <div id="ov-tasks"></div>
+          </div>
+          <div class="card">
+            <div class="row-between"><h2 class="no-margin" data-i18n="dash.recentComments">Recent comments</h2><button type="button" class="link-btn" id="btn-all-comments" data-i18n="ws.viewAll">View all</button></div>
+            <ul id="ov-comments" class="feed"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== My tasks ===== -->
+      <section id="view-mytasks" class="view">
+        <div class="card">
+          <div class="row-between">
+            <h2 class="no-margin" data-i18n="nav.myTasks">My tasks</h2>
+            <label class="field narrow"><span class="sr-only" data-i18n="col.status">Status</span>
+              <select id="mt-filter"><option value="open" data-i18n="ws.filterOpen">Open</option><option value="completed" data-i18n="tstatus.completed">Completed</option><option value="all" data-i18n="state.all">All</option></select></label>
+          </div>
+          <div id="mt-empty" class="empty" hidden data-i18n="ws.noTasks">No tasks here.</div>
+          <div id="mt-list" class="task-list"></div>
+        </div>
+      </section>
+
+      <!-- ===== Available tasks ===== -->
+      <section id="view-available" class="view">
+        <div class="card">
+          <h2 data-i18n="nav.available">Available tasks</h2>
+          <p class="hint" data-i18n="ws.availableNote">Tasks published by the manager. Take one to make it yours: nobody else can take it afterwards.</p>
+          <div class="toolbar">
+            <label class="field grow"><span data-i18n="task.search">Search tasks</span><input id="av-search" type="search" autocomplete="off" data-i18n-ph="emp.searchPh" placeholder="…"></label>
+            <label class="field"><span data-i18n="task.project">Project</span><select id="av-project"></select></label>
+            <label class="field"><span data-i18n="task.priority">Priority</span>
+              <select id="av-priority"><option value="" data-i18n="state.all">All</option><option value="high" data-i18n="priority.high">High</option><option value="medium" data-i18n="priority.medium">Medium</option><option value="low" data-i18n="priority.low">Low</option></select></label>
+          </div>
+          <div id="av-loading" class="status" data-i18n="common.loading">Loading…</div>
+          <div id="av-empty" class="empty" hidden data-i18n="ws.noAvailable">No tasks are available right now.</div>
+          <div id="av-noresults" class="empty" hidden data-i18n="task.noResults">No tasks match the filters.</div>
+          <div id="av-list" class="task-list"></div>
+        </div>
+      </section>
+
+      <!-- ===== Work history ===== -->
+      <section id="view-history" class="view">
+        <div class="card">
+          <h2 data-i18n="nav.history">Work history</h2>
+          <div id="history-empty" class="empty" hidden data-i18n="ws.historyEmpty">No work sessions recorded yet.</div>
+          <div class="table-wrap"><table id="history-table" class="stack" hidden>
+            <thead><tr><th data-i18n="col.task">Task</th><th data-i18n="col.start">Start</th><th data-i18n="col.end">End</th><th data-i18n="col.duration">Duration</th><th data-i18n="col.status">Status</th></tr></thead>
+            <tbody></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- ===== Comments ===== -->
+      <section id="view-comments" class="view">
+        <div class="card">
+          <h2 data-i18n="nav.comments">Comments</h2>
+          <label class="field"><span data-i18n="comment.task">Task</span><select id="cm-task"></select></label>
+          <div id="cm-empty-tasks" class="empty" hidden data-i18n="comment.noTasks">You have no tasks to discuss yet.</div>
+          <ul id="cm-thread" class="feed comments"></ul>
+          <form id="cm-form" class="comment-form">
+            <label class="field grow"><span data-i18n="comment.write">Write a comment</span><textarea id="cm-text" rows="3" maxlength="1000"></textarea></label>
+            <div class="field actions"><button type="submit" class="primary" id="cm-send" data-i18n="comment.send">Send</button></div>
+          </form>
+          <div id="cm-status" class="status" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span data-i18n="footer.note">Demonstration with fictional data. Times are shown in UTC.</span></footer>
   </div>
-</main>
-<footer class="container footer"><span data-i18n="footer.note">Demonstration with fictional data. Times are shown in UTC.</span></footer>
+</div>
 <script>
   var WORKSPACE_TOKEN = <?!= workspaceTokenJs ?>;
 </script>
 <script>window.WTT_DICT = <?!= jsonForScript_(I18N) ?>;
 window.WTT_RESOLVE_LANG = <?!= resolveLanguage.toString() ?>;</script>
 <?!= include_('i18n_js'); ?>
+<?!= include_('common_js'); ?>
 <?!= include_('employee_js'); ?>
 </body>
 </html>

@@ -82,7 +82,10 @@ var FIELD_LIMITS = {
   lastName: 100,
   middleName: 100,
   email: 320,
-  taskTitle: 500
+  taskTitle: 500,
+  description: 2000,
+  comment: 1000,
+  projectName: 100
 };
 
 function validateLength(value, limit, fieldLabel) {
@@ -177,49 +180,86 @@ function checkRowLimit(currentRows, limit, label) {
 
 // Fictional sample dataset for the public demonstration. Pure: ids and tokens
 // are injected so Node can test the invariants (no overlapping sessions,
-// durationMs == end - start, exactly one active task per employee, only
-// reserved example.com addresses). Every timestamp is a whole past day
-// relative to `nowMs`, so no session is ever "running".
+// durationMs == end - start, exactly one active task per sample employee, only
+// reserved example.com addresses, every task/comment/activity row points at an
+// existing parent). Every session lies on a whole past day relative to `nowMs`,
+// so no session is ever "running"; due dates are relative to today so the
+// overdue indicator can be seen.
 function buildDemoSample(nowMs, newId, newToken) {
   var DAY = 86400000;
   var midnight = nowMs - (nowMs % DAY);
   function at(daysAgo, hour, minute) {
     return new Date(midnight - daysAgo * DAY + (hour * 60 + minute) * 60000).toISOString();
   }
-  var employees = [], tasks = [], sessions = [];
+  function ymd(daysFromToday) { return ymdUtc(midnight + daysFromToday * DAY); }
+  var projects = [], employees = [], tasks = [], sessions = [], comments = [], activity = [];
+
+  function addProject(name, description, createdDaysAgo) {
+    var p = { id: newId(), name: name, description: description, status: 'active', createdAt: at(createdDaysAgo, 8, 0) };
+    projects.push(p);
+    return p;
+  }
   function addEmployee(last, first, middle, email, createdDaysAgo) {
     var e = { id: newId(), lastName: last, firstName: first, middleName: middle, email: email,
       workspaceToken: newToken(), createdAt: at(createdDaysAgo, 8, 0), active: true };
     employees.push(e);
     return e;
   }
-  function addTask(emp, title, status, createdAt, completedAt) {
-    var t = { id: newId(), employeeId: emp.id, title: title, status: status, createdAt: createdAt, completedAt: completedAt || '' };
+  function logActivity(task, when, actorType, actorId, action, detail) {
+    activity.push({ id: newId(), taskId: task.id, at: when, actorType: actorType, actorId: actorId || '', action: action, detail: detail || '' });
+  }
+  function addTask(emp, project, title, status, createdAt, completedAt, o) {
+    o = o || {};
+    var t = { id: newId(), employeeId: emp ? emp.id : '', title: title, status: status, createdAt: createdAt,
+      completedAt: completedAt || '', projectId: project ? project.id : '', priority: o.priority || 'medium',
+      dueDate: o.due || '', description: o.description || '', assignedAt: emp ? createdAt : '' };
     tasks.push(t);
+    logActivity(t, createdAt, 'manager', '', 'created', t.priority);
+    if (status === 'available') logActivity(t, createdAt, 'manager', '', 'published', '');
+    if (emp) logActivity(t, createdAt, 'manager', '', 'assigned', emp.firstName + ' ' + emp.lastName);
+    if (status === 'completed') logActivity(t, completedAt, 'employee', emp.id, 'completed', '');
     return t;
   }
   function addSession(emp, task, start, end, status) {
     sessions.push({ id: newId(), employeeId: emp.id, taskId: task.id, startTime: start, endTime: end,
       durationMs: new Date(end).getTime() - new Date(start).getTime(), status: status });
+    logActivity(task, start, 'employee', emp.id, 'started', '');
+    logActivity(task, end, 'employee', emp.id, status === 'completed' ? 'completed' : 'paused', '');
+  }
+  function addComment(task, authorType, emp, text, when) {
+    comments.push({ id: newId(), taskId: task.id, authorType: authorType, authorId: emp ? emp.id : '',
+      authorName: emp ? emp.firstName + ' ' + emp.lastName : '', text: text, createdAt: when });
   }
 
+  var backend = addProject('Backend', 'API and database work', 9);
+  var frontend = addProject('Frontend', 'Web interface', 9);
+  var qa = addProject('QA', 'Testing and quality', 9);
+
   var alex = addEmployee('Rivera', 'Alex', '', 'alex.rivera@example.com', 6);
-  var a1 = addTask(alex, 'Draft onboarding checklist', 'replaced', at(6, 8, 0), at(4, 17, 0));
+  var a1 = addTask(alex, frontend, 'Draft onboarding checklist', 'replaced', at(6, 8, 0), at(4, 17, 0), { priority: 'medium' });
   addSession(alex, a1, at(6, 9, 0), at(6, 10, 30), 'paused');
   addSession(alex, a1, at(5, 9, 15), at(5, 11, 45), 'paused');
   addSession(alex, a1, at(4, 13, 0), at(4, 13, 40), 'paused');
-  var a2 = addTask(alex, 'Review test plan', 'active', at(4, 17, 0), '');
+  var a2 = addTask(alex, qa, 'Review test plan', 'active', at(4, 17, 0), '', { priority: 'high', due: ymd(2), description: 'Check coverage of the timer scenarios and note gaps.' });
   addSession(alex, a2, at(3, 10, 0), at(3, 12, 0), 'paused');
   addSession(alex, a2, at(1, 14, 0), at(1, 15, 30), 'paused');
+  addComment(a2, 'manager', null, 'Please attach the test results when you finish.', at(2, 10, 0));
+  addComment(a2, 'employee', alex, 'Will do. The second pass is planned for Friday.', at(2, 11, 30));
 
   var sam = addEmployee('Nguyen', 'Sam', 'Q', 'sam.nguyen@example.com', 8);
-  var b1 = addTask(sam, 'Prototype report filters', 'completed', at(8, 8, 0), at(7, 10, 0));
+  var b1 = addTask(sam, frontend, 'Prototype report filters', 'completed', at(8, 8, 0), at(7, 10, 0), { priority: 'medium', due: ymd(-6) });
   addSession(sam, b1, at(8, 9, 0), at(8, 11, 0), 'paused');
   addSession(sam, b1, at(7, 9, 0), at(7, 10, 0), 'completed');
-  var b2 = addTask(sam, 'Write demo walkthrough', 'active', at(7, 10, 30), '');
+  var b2 = addTask(sam, frontend, 'Write demo walkthrough', 'active', at(7, 10, 30), '', { priority: 'medium', due: ymd(-1), description: 'Short step-by-step script for reviewers.' });
   addSession(sam, b2, at(2, 11, 0), at(2, 11, 45), 'paused');
+  addComment(b2, 'employee', sam, 'Waiting for the walkthrough script to be approved.', at(1, 9, 0));
 
-  return { employees: employees, tasks: tasks, sessions: sessions };
+  addTask(null, backend, 'Optimize database queries', 'available', at(3, 9, 0), '', { priority: 'high', due: ymd(5), description: 'Profile the slowest report queries and propose indexes.' });
+  addTask(null, backend, 'Write unit tests for the new API methods', 'available', at(3, 9, 5), '', { priority: 'medium', due: ymd(3), description: 'Cover validation and error paths.' });
+  addTask(null, frontend, 'Prepare the design presentation', 'available', at(2, 15, 0), '', { priority: 'low', description: 'Slides for the next interface review.' });
+  addTask(null, qa, 'Review email templates', 'draft', at(1, 16, 0), '', { priority: 'medium', due: ymd(7) });
+
+  return { projects: projects, employees: employees, tasks: tasks, sessions: sessions, comments: comments, activity: activity };
 }
 
 // --- work state, analytics, CSV, invitations (all pure) ----------------------
@@ -296,7 +336,7 @@ function fmtHms_(ms) {
 // Excel opens Cyrillic text correctly.
 function buildReportCsv(rows, labels) {
   labels = labels || {};
-  var head = [labels.employee || 'Employee', labels.email || 'Email', labels.task || 'Task',
+  var head = [labels.employee || 'Employee', labels.email || 'Email', labels.project || 'Project', labels.task || 'Task',
     labels.date || 'Date (UTC)', labels.start || 'Start (UTC)', labels.end || 'End (UTC)',
     labels.durationHms || 'Duration (hh:mm:ss)', labels.durationSec || 'Duration (seconds)', labels.status || 'Status'];
   var lines = [head.map(csvCell).join(',')];
@@ -304,7 +344,7 @@ function buildReportCsv(rows, labels) {
     (r.sessions || []).forEach(function (s) {
       var statusName = (labels.statuses && labels.statuses[s.status]) || s.status;
       lines.push([
-        r.name, r.email, s.taskTitle,
+        r.name, r.email, s.projectName || '', s.taskTitle,
         fmtUtcStamp_(s.startTime).slice(0, 10), fmtUtcStamp_(s.startTime), fmtUtcStamp_(s.endTime),
         fmtHms_(s.overlapMs), Math.round(s.overlapMs / 1000), statusName
       ].map(csvCell).join(','));
@@ -373,6 +413,99 @@ function filterEmployees(list, query, state) {
   });
 }
 
+// --- task model: priorities, due dates, states and transitions (pure) ------------
+
+var TASK_PRIORITIES = ['low', 'medium', 'high'];
+
+function normalizePriority(p) {
+  var v = String(p === null || p === undefined ? '' : p).toLowerCase();
+  return TASK_PRIORITIES.indexOf(v) >= 0 ? v : 'medium';
+}
+
+function isValidPriority(p) {
+  return TASK_PRIORITIES.indexOf(String(p)) >= 0;
+}
+
+// Stored statuses: draft (unpublished backlog), available (shared pool),
+// active (owned by an employee, not finished), completed, replaced (legacy).
+// Displayed statuses add the work state of an owned task: assigned (nothing
+// recorded yet), in_progress (a timer is running) or paused.
+var TASK_TRANSITIONS = {
+  draft: { publish: 'available', assign: 'active' },
+  available: { unpublish: 'draft', claim: 'active', assign: 'active' },
+  active: { complete: 'completed' },
+  completed: {},
+  replaced: {}
+};
+
+// The status after `action`, or null when the action is not allowed.
+function nextTaskStatus(status, action) {
+  var row = TASK_TRANSITIONS[status];
+  if (!row || !Object.prototype.hasOwnProperty.call(row, action)) return null;
+  return row[action];
+}
+
+// sessions: the sessions of this task only.
+function deriveTaskStatus(task, sessions) {
+  if (task.status !== 'active') return task.status;
+  sessions = sessions || [];
+  var latest = null;
+  for (var i = 0; i < sessions.length; i++) {
+    if (sessions[i].status === 'active') return 'in_progress';
+    if (!latest || sessions[i].startTime > latest.startTime) latest = sessions[i];
+  }
+  if (latest && latest.status === 'paused') return 'paused';
+  return 'assigned';
+}
+
+// A task is overdue when it has a due date before today (UTC) and is not finished.
+function isOverdue(task, todayYmd) {
+  if (!task || !task.dueDate || !todayYmd) return false;
+  if (task.status === 'completed' || task.status === 'replaced') return false;
+  return String(task.dueDate) < String(todayYmd);
+}
+
+// Accepts '' (no deadline) or a strict YYYY-MM-DD calendar date.
+function normalizeDueDate(v) {
+  var s = String(v === null || v === undefined ? '' : v).trim();
+  if (!s) return '';
+  parseYmdStrictUtc(s, false);
+  return s;
+}
+
+// Reduces an (id, status) list into counts so totals can be reconciled.
+function countByStatus(statuses) {
+  var out = { draft: 0, available: 0, assigned: 0, in_progress: 0, paused: 0, completed: 0, replaced: 0 };
+  statuses.forEach(function (s) { if (out[s] !== undefined) out[s]++; });
+  return out;
+}
+
+// Task search + filters for the Manager's Tasks page, run in the browser on the
+// loaded list. Self-contained (shipped to the page as source text, like
+// filterEmployees). f: { q, projectId ('__none' = no project), status (displayed
+// status), priority, employeeId ('__none' = unassigned), deadline ('overdue' |
+// 'week' | 'none'), today (YYYY-MM-DD), weekEnd (YYYY-MM-DD) }.
+function filterTasks(list, f) {
+  f = f || {};
+  var parts = String(f.q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return (list || []).filter(function (t) {
+    if (f.projectId && (f.projectId === '__none' ? t.projectId : t.projectId !== f.projectId)) return false;
+    if (f.status && t.displayStatus !== f.status) return false;
+    if (f.priority && t.priority !== f.priority) return false;
+    if (f.employeeId && (f.employeeId === '__none' ? t.employeeId : t.employeeId !== f.employeeId)) return false;
+    if (f.deadline === 'overdue' && !t.overdue) return false;
+    if (f.deadline === 'none' && t.dueDate) return false;
+    if (f.deadline === 'week' && !(t.dueDate && t.dueDate >= f.today && t.dueDate <= f.weekEnd)) return false;
+    if (!parts.length) return true;
+    var hay = [t.title, t.description, t.projectName, t.employeeName].join(' ').toLowerCase();
+    return parts.every(function (p) { return hay.indexOf(p) >= 0; });
+  });
+}
+
+function isTestArtifactProjectName(name) {
+  return typeof name === 'string' && /^acceptance project \d{10,}$/i.test(name.trim());
+}
+
 // --- error marker ---------------------------------------------------------
 // Services throw UserError for messages that are safe to surface verbatim in
 // the UI (e.g. "A session is already running."). Unmarked errors are treated
@@ -409,8 +542,18 @@ if (typeof module !== 'undefined' && module.exports) {
     isDemoEnvironmentName: isDemoEnvironmentName,
     checkRowLimit: checkRowLimit,
     buildDemoSample: buildDemoSample,
+    TASK_PRIORITIES: TASK_PRIORITIES,
+    TASK_TRANSITIONS: TASK_TRANSITIONS,
+    normalizePriority: normalizePriority,
+    isValidPriority: isValidPriority,
+    nextTaskStatus: nextTaskStatus,
+    deriveTaskStatus: deriveTaskStatus,
+    isOverdue: isOverdue,
+    normalizeDueDate: normalizeDueDate,
+    countByStatus: countByStatus,
     classifyWorkState: classifyWorkState,
     filterEmployees: filterEmployees,
+    filterTasks: filterTasks,
     ymdUtc: ymdUtc,
     dailyBreakdown: dailyBreakdown,
     csvCell: csvCell,
@@ -419,6 +562,7 @@ if (typeof module !== 'undefined' && module.exports) {
     sanitizeMailText: sanitizeMailText,
     shortHash: shortHash,
     isTestArtifactEmail: isTestArtifactEmail,
+    isTestArtifactProjectName: isTestArtifactProjectName,
     FIELD_LIMITS: FIELD_LIMITS
   };
 }

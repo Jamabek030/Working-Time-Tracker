@@ -301,7 +301,7 @@ function api_getEmployeeDetails(employeeId) {
     setupSheets_();
     var employee = employees_findById_(employeeId);
     if (!employee) throw UserError('Employee not found.');
-    var tasks = tasks_forEmployee_(employeeId);
+    var tasks = tasks_views_(undefined, function (t) { return t.employeeId === employee.id; });
     var sessions = sessions_forEmployee_(employeeId);
     var activeTask = null;
     for (var i = 0; i < tasks.length; i++) if (tasks[i].status === 'active') { activeTask = tasks[i]; break; }
@@ -357,49 +357,234 @@ function api_generateReport(fromDate, toDate) {
   });
 }
 
+// -------- Manager API: projects and tasks --------
+
+function api_listProjects() {
+  return safeApi_('api_listProjects', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var views = tasks_views_();
+    return projects_list_().map(function (p) {
+      var mine = views.filter(function (v) { return v.projectId === p.id; });
+      var ms = 0;
+      mine.forEach(function (v) { ms += v.trackedMs; });
+      return {
+        id: p.id, name: p.name, description: p.description, createdAt: p.createdAt,
+        taskCount: mine.length, trackedMs: ms,
+        tasksByStatus: countByStatus(mine.map(function (v) { return v.displayStatus; }))
+      };
+    });
+  });
+}
+
+function api_createProject(data) {
+  return safeApi_('api_createProject', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var p = projects_create_(data);
+    return { id: p.id, name: p.name, description: p.description, createdAt: p.createdAt };
+  });
+}
+
+function api_listTasks() {
+  return safeApi_('api_listTasks', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    return tasks_views_();
+  });
+}
+
+// mode: 'draft' (backlog), 'pool' (published to the shared pool) or 'assign'
+// (given directly to data.employeeId).
+function api_createTask(data) {
+  return safeApi_('api_createTask', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var mode = data && data.mode;
+    if (mode !== 'draft' && mode !== 'pool' && mode !== 'assign') throw UserError('Task mode is invalid.');
+    var employee = null;
+    if (mode === 'assign') {
+      var empId = sanitize(data && data.employeeId);
+      if (!empId) throw UserError('Employee is required.');
+      employee = employees_findById_(empId);
+      if (!employee) throw UserError('Employee not found.');
+    }
+    var ctx = getContext_();
+    var task = tasks_create_({
+      title: data.title, description: data.description, projectId: data.projectId,
+      priority: data.priority, dueDate: data.dueDate,
+      status: mode === 'draft' ? 'draft' : (mode === 'pool' ? 'available' : 'active'),
+      employeeId: employee ? employee.id : ''
+    }, ctx);
+    activity_log_(ctx, task.id, MANAGER_ACTOR_, 'created', task.priority);
+    if (mode === 'pool') activity_log_(ctx, task.id, MANAGER_ACTOR_, 'published', '');
+    if (employee) activity_log_(ctx, task.id, MANAGER_ACTOR_, 'assigned', employees_fullName_(employee));
+    return tasks_views_(ctx, function (t) { return t.id === task.id; })[0];
+  });
+}
+
+function taskViewById_(taskId, ctx) {
+  var v = tasks_views_(ctx, function (t) { return t.id === String(taskId); })[0];
+  if (!v) throw UserError('Task not found.');
+  return v;
+}
+
+function api_publishTask(taskId) {
+  return safeApi_('api_publishTask', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    tasks_publish_(String(taskId), MANAGER_ACTOR_);
+    return taskViewById_(taskId);
+  });
+}
+
+function api_unpublishTask(taskId) {
+  return safeApi_('api_unpublishTask', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    tasks_unpublish_(String(taskId), MANAGER_ACTOR_);
+    return taskViewById_(taskId);
+  });
+}
+
+// Moves a draft or pool task to one employee (same row, one locked step).
+function api_assignTaskToEmployee(taskId, employeeId) {
+  return safeApi_('api_assignTaskToEmployee', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    tasks_assign_(String(taskId), String(employeeId || ''), MANAGER_ACTOR_);
+    return taskViewById_(taskId);
+  });
+}
+
+function api_updateTask(taskId, data) {
+  return safeApi_('api_updateTask', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    tasks_update_(String(taskId), data || {}, MANAGER_ACTOR_);
+    return taskViewById_(taskId);
+  });
+}
+
+function api_getTaskDetails(taskId) {
+  return safeApi_('api_getTaskDetails', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var ctx = getContext_();
+    var task = taskViewById_(taskId, ctx);
+    var names = {};
+    employees_list_(ctx).forEach(function (e) { names[e.id] = employees_fullName_(e); });
+    var sessions = sessions_forTask_(task.id, ctx).map(function (s) {
+      return { id: s.id, employeeName: names[s.employeeId] || '', startTime: s.startTime, endTime: s.endTime, durationMs: s.durationMs, status: s.status };
+    });
+    var activity = activity_forTask_(task.id, ctx).map(function (a) {
+      return { at: a.at, actorType: a.actorType, actorName: a.actorType === 'employee' ? (names[a.actorId] || '') : '', action: a.action, detail: a.detail };
+    });
+    var comments = comments_forTask_(task.id, ctx).map(function (c) {
+      return { id: c.id, authorType: c.authorType, authorName: c.authorName, text: c.text, createdAt: c.createdAt };
+    });
+    return { task: task, sessions: sessions, activity: activity, comments: comments };
+  });
+}
+
+function api_addManagerComment(taskId, text) {
+  return safeApi_('api_addManagerComment', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var ctx = getContext_();
+    var task = tasks_findById_(String(taskId), ctx);
+    if (!task) throw UserError('Task not found.');
+    var c = comments_add_(task, MANAGER_ACTOR_, text, ctx);
+    return { id: c.id, authorType: c.authorType, authorName: c.authorName, text: c.text, createdAt: c.createdAt };
+  });
+}
+
 // -------- Employee API --------
+//
+// Every function resolves the employee from the workspace token on the server.
+// A client-supplied employee id is never used, so changing identifiers in the
+// browser cannot reach another employee's records: ownership of a task is always
+// decided by the stored row (tasks_requireOwned_).
+
+function employeeFromToken_(token) {
+  var employee = employees_findByToken_(token);
+  if (!employee) throw UserError('Invalid workspace link.');
+  return employee;
+}
 
 function api_getEmployeeState(token) {
   return safeApi_('api_getEmployeeState', function () {
     requireOpenAccess_();
     setupSheets_();
-    var employee = employees_findByToken_(token);
-    if (!employee) throw UserError('Invalid workspace link.');
-    var tasks = tasks_forEmployee_(employee.id);
-    var sessions = sessions_forEmployee_(employee.id);
-    var activeTask = null;
-    for (var i = 0; i < tasks.length; i++) if (tasks[i].status === 'active') { activeTask = tasks[i]; break; }
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    var tasks = tasks_views_(ctx, function (t) { return t.employeeId === employee.id; });
+    var sessions = sessions_forEmployee_(employee.id, ctx);
     var activeSession = null;
     for (var j = 0; j < sessions.length; j++) if (sessions[j].status === 'active') { activeSession = sessions[j]; break; }
-    var totalMsForActiveTask = 0;
-    if (activeTask) {
-      var activeTaskSessions = sessions.filter(function (s) { return s.taskId === activeTask.id; });
-      totalMsForActiveTask = sumSessionMs(activeTaskSessions, Date.now());
-    }
+    var cur = tasks_currentFor_(employee.id, ctx);
+    var activeTask = null;
+    if (cur) for (var k = 0; k < tasks.length; k++) if (tasks[k].id === cur.id) { activeTask = tasks[k]; break; }
+    var nowMs = Date.now();
+    var dayStart = nowMs - (nowMs % 86400000);
+    var todayMs = 0;
+    sessions.forEach(function (s) { todayMs += overlapMs(s.startTime, s.endTime, dayStart, dayStart + 86400000 - 1, nowMs); });
+    var today = ymdUtc(nowMs);
+    var completedToday = tasks.filter(function (t) { return t.status === 'completed' && String(t.completedAt).slice(0, 10) === today; }).length;
     return {
-      employee: {
-        id: employee.id,
-        firstName: employee.firstName,
-        lastName: employee.lastName,
-        middleName: employee.middleName
-      },
+      employee: { id: employee.id, firstName: employee.firstName, lastName: employee.lastName, middleName: employee.middleName },
       tasks: tasks,
       sessions: sessions,
       activeTask: activeTask,
       activeSession: activeSession,
-      totalMsForActiveTask: totalMsForActiveTask,
+      totalMsForActiveTask: activeTask ? activeTask.trackedMs : 0,
+      todayMs: todayMs,
+      completedToday: completedToday,
       serverTime: new Date().toISOString()
     };
   });
 }
 
-function api_startSession(token) {
+// The shared pool: published tasks nobody owns. Contains no employee data.
+function api_listAvailableTasks(token) {
+  return safeApi_('api_listAvailableTasks', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    employeeFromToken_(token);
+    return tasks_views_(getContext_(), function (t) { return t.status === 'available' && !t.employeeId; }).map(function (v) {
+      return { id: v.id, title: v.title, description: v.description, projectId: v.projectId, projectName: v.projectName,
+        priority: v.priority, dueDate: v.dueDate, overdue: v.overdue, createdAt: v.createdAt };
+    });
+  });
+}
+
+// Claiming is validated and persisted on the server under the script lock: a task
+// that is no longer available (taken, assigned, unpublished) is refused.
+function api_claimTask(token, taskId) {
+  return safeApi_('api_claimTask', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    tasks_claim_(String(taskId), employee, ctx);
+    return tasks_views_(ctx, function (t) { return t.id === String(taskId); })[0];
+  });
+}
+
+function sessionAction_(session, employee, ctx, verb) {
+  var again = verb === 'resumed' || sessions_forTask_(session.taskId, ctx).length > 1;
+  activity_log_(ctx, session.taskId, employeeActor_(employee), verb === 'paused' ? 'paused' : (again ? 'resumed' : 'started'), '');
+}
+
+function api_startSession(token, taskId) {
   return safeApi_('api_startSession', function () {
     requireOpenAccess_();
     setupSheets_();
-    var employee = employees_findByToken_(token);
-    if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_start_(employee.id);
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    var session = sessions_start_(employee.id, ctx, taskId ? String(taskId) : undefined);
+    sessionAction_(session, employee, ctx, 'started');
+    return session;
   });
 }
 
@@ -407,28 +592,61 @@ function api_pauseSession(token) {
   return safeApi_('api_pauseSession', function () {
     requireOpenAccess_();
     setupSheets_();
-    var employee = employees_findByToken_(token);
-    if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_pause_(employee.id);
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    var session = sessions_pause_(employee.id, ctx);
+    sessionAction_(session, employee, ctx, 'paused');
+    return session;
   });
 }
 
-function api_resumeSession(token) {
+function api_resumeSession(token, taskId) {
   return safeApi_('api_resumeSession', function () {
     requireOpenAccess_();
     setupSheets_();
-    var employee = employees_findByToken_(token);
-    if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_resume_(employee.id);
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    var session = sessions_resume_(employee.id, ctx, taskId ? String(taskId) : undefined);
+    sessionAction_(session, employee, ctx, 'resumed');
+    return session;
   });
 }
 
-function api_finishTask(token) {
+function api_finishTask(token, taskId) {
   return safeApi_('api_finishTask', function () {
     requireOpenAccess_();
     setupSheets_();
-    var employee = employees_findByToken_(token);
-    if (!employee) throw UserError('Invalid workspace link.');
-    return sessions_finish_(employee.id);
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    var result = sessions_finish_(employee.id, ctx, taskId ? String(taskId) : undefined);
+    activity_log_(ctx, result.finishedTaskId, employeeActor_(employee), 'completed', '');
+    return result;
+  });
+}
+
+// Comments on the employee's own tasks (all tasks they own, any status).
+function api_listMyComments(token) {
+  return safeApi_('api_listMyComments', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    var titles = {};
+    tasks_forEmployee_(employee.id, ctx).forEach(function (t) { titles[t.id] = t.title; });
+    return comments_list_(ctx).filter(function (c) { return titles[c.taskId] !== undefined; }).map(function (c) {
+      return { id: c.id, taskId: c.taskId, taskTitle: titles[c.taskId], authorType: c.authorType, authorName: c.authorName, text: c.text, createdAt: c.createdAt };
+    });
+  });
+}
+
+function api_addComment(token, taskId, text) {
+  return safeApi_('api_addComment', function () {
+    requireOpenAccess_();
+    setupSheets_();
+    var employee = employeeFromToken_(token);
+    var ctx = getContext_();
+    var task = tasks_requireOwned_(taskId, employee.id, ctx);
+    var c = comments_add_(task, employeeActor_(employee), text, ctx);
+    return { id: c.id, taskId: c.taskId, taskTitle: task.title, authorType: c.authorType, authorName: c.authorName, text: c.text, createdAt: c.createdAt };
   });
 }

@@ -48,7 +48,7 @@ function demo_environmentOk_() {
 // three application sheets are capped; Test_* sheets used by runTests are not.
 function demo_checkRowCap_(sheetName, sheet) {
   if (!DEMO_CONFIG.ENABLED) return;
-  var keys = ['EMPLOYEES', 'TASKS', 'SESSIONS', 'INVITES'];
+  var keys = ['EMPLOYEES', 'TASKS', 'SESSIONS', 'INVITES', 'PROJECTS', 'COMMENTS', 'ACTIVITY'];
   for (var i = 0; i < keys.length; i++) {
     if (DEFAULT_CONFIG.SHEETS[keys[i]] === sheetName) {
       checkRowLimit(Math.max(0, sheet.getLastRow() - 1), DEMO_CONFIG.LIMITS[keys[i]], sheetName);
@@ -59,10 +59,14 @@ function demo_checkRowCap_(sheetName, sheet) {
 
 function demo_seed_(ctx) {
   var sample = buildDemoSample(Date.now(), uuid_, token_);
+  sample.projects.forEach(function (r) { appendRow_(ctx.sheets.PROJECTS, r, DEFAULT_CONFIG.HEADERS.PROJECTS); });
   sample.employees.forEach(function (r) { appendRow_(ctx.sheets.EMPLOYEES, r, DEFAULT_CONFIG.HEADERS.EMPLOYEES); });
   sample.tasks.forEach(function (r) { appendRow_(ctx.sheets.TASKS, r, DEFAULT_CONFIG.HEADERS.TASKS); });
   sample.sessions.forEach(function (r) { appendRow_(ctx.sheets.SESSIONS, r, DEFAULT_CONFIG.HEADERS.SESSIONS); });
-  return { employees: sample.employees.length, tasks: sample.tasks.length, sessions: sample.sessions.length };
+  sample.comments.forEach(function (r) { appendRow_(ctx.sheets.COMMENTS, r, DEFAULT_CONFIG.HEADERS.COMMENTS); });
+  sample.activity.forEach(function (r) { appendRow_(ctx.sheets.ACTIVITY, r, DEFAULT_CONFIG.HEADERS.ACTIVITY); });
+  return { employees: sample.employees.length, tasks: sample.tasks.length, sessions: sample.sessions.length,
+    projects: sample.projects.length, comments: sample.comments.length, activity: sample.activity.length };
 }
 
 // Reachable by anonymous visitors through api_loadDemoSample. Non-destructive:
@@ -91,7 +95,7 @@ function demo_reset_(ctx) {
   lock.waitLock(10000);
   try {
     var ss = getSpreadsheet_();
-    [ctx.sheets.EMPLOYEES, ctx.sheets.TASKS, ctx.sheets.SESSIONS, ctx.sheets.INVITES].forEach(function (name) {
+    [ctx.sheets.EMPLOYEES, ctx.sheets.TASKS, ctx.sheets.SESSIONS, ctx.sheets.INVITES, ctx.sheets.PROJECTS, ctx.sheets.COMMENTS, ctx.sheets.ACTIVITY].forEach(function (name) {
       if (!name) return;
       var sheet = ss.getSheetByName(name);
       if (!sheet) return;
@@ -121,22 +125,30 @@ function resetDemoData() {
 }
 
 // Removes ONLY the fictional records created by this project's own acceptance
-// runs (see isTestArtifactEmail in pure.gs: demo.verifier.<digits>@example.com
-// and inj.verifier@example.com) together with their tasks, sessions and
-// invitation log rows. Any other employee is left untouched.
+// runs: employees whose email matches isTestArtifactEmail (demo.verifier.<digits>@example.com,
+// inj.verifier@example.com) and projects named like isTestArtifactProjectName
+// ("Acceptance project <digits>"), together with their tasks, sessions, comments,
+// activity and invitation rows. Anything else is left untouched.
 function demo_cleanup_(ctx) {
   ctx = ctx || getContext_();
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    var ids = {};
-    employees_list_(ctx).forEach(function (e) { if (isTestArtifactEmail(e.email)) ids[e.id] = true; });
-    var removed = { employees: 0, tasks: 0, sessions: 0, invites: 0 };
-    if (!Object.keys(ids).length) return removed;
-    removed.sessions = deleteRowsWhere_(ctx.sheets.SESSIONS, function (r) { return ids[String(r.employeeId)] === true; });
-    removed.tasks = deleteRowsWhere_(ctx.sheets.TASKS, function (r) { return ids[String(r.employeeId)] === true; });
-    if (ctx.sheets.INVITES) removed.invites = deleteRowsWhere_(ctx.sheets.INVITES, function (r) { return ids[String(r.employeeId)] === true; });
-    removed.employees = deleteRowsWhere_(ctx.sheets.EMPLOYEES, function (r) { return ids[String(r.id)] === true; });
+    var empIds = {}, projIds = {}, taskIds = {};
+    employees_list_(ctx).forEach(function (e) { if (isTestArtifactEmail(e.email)) empIds[e.id] = true; });
+    projects_list_(ctx).forEach(function (p) { if (isTestArtifactProjectName(p.name)) projIds[p.id] = true; });
+    tasks_list_(ctx).forEach(function (t) {
+      if ((t.employeeId && empIds[t.employeeId]) || (t.projectId && projIds[t.projectId])) taskIds[t.id] = true;
+    });
+    var removed = { employees: 0, tasks: 0, sessions: 0, invites: 0, projects: 0, comments: 0, activity: 0 };
+    if (!Object.keys(empIds).length && !Object.keys(projIds).length) return removed;
+    removed.sessions = deleteRowsWhere_(ctx.sheets.SESSIONS, function (r) { return empIds[String(r.employeeId)] === true || taskIds[String(r.taskId)] === true; });
+    if (ctx.sheets.COMMENTS) removed.comments = deleteRowsWhere_(ctx.sheets.COMMENTS, function (r) { return taskIds[String(r.taskId)] === true; });
+    if (ctx.sheets.ACTIVITY) removed.activity = deleteRowsWhere_(ctx.sheets.ACTIVITY, function (r) { return taskIds[String(r.taskId)] === true; });
+    removed.tasks = deleteRowsWhere_(ctx.sheets.TASKS, function (r) { return taskIds[String(r.id)] === true; });
+    if (ctx.sheets.INVITES) removed.invites = deleteRowsWhere_(ctx.sheets.INVITES, function (r) { return empIds[String(r.employeeId)] === true; });
+    removed.employees = deleteRowsWhere_(ctx.sheets.EMPLOYEES, function (r) { return empIds[String(r.id)] === true; });
+    if (ctx.sheets.PROJECTS) removed.projects = deleteRowsWhere_(ctx.sheets.PROJECTS, function (r) { return projIds[String(r.id)] === true; });
     return removed;
   } finally {
     lock.releaseLock();

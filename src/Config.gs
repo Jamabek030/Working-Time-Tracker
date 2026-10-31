@@ -6,13 +6,20 @@ var DEFAULT_CONFIG = {
     EMPLOYEES: 'Employees',
     TASKS: 'Tasks',
     SESSIONS: 'WorkSessions',
-    INVITES: 'Invitations'
+    INVITES: 'Invitations',
+    PROJECTS: 'Projects',
+    COMMENTS: 'TaskComments',
+    ACTIVITY: 'TaskActivity'
   },
   HEADERS: {
     EMPLOYEES: ['id', 'lastName', 'firstName', 'middleName', 'email', 'workspaceToken', 'createdAt', 'active'],
-    TASKS: ['id', 'employeeId', 'title', 'status', 'createdAt', 'completedAt'],
+    // The last five columns were added later; ensureSheet_ appends them to an existing Tasks sheet.
+    TASKS: ['id', 'employeeId', 'title', 'status', 'createdAt', 'completedAt', 'projectId', 'priority', 'dueDate', 'description', 'assignedAt'],
     SESSIONS: ['id', 'employeeId', 'taskId', 'startTime', 'endTime', 'durationMs', 'status'],
-    INVITES: ['id', 'employeeId', 'emailHash', 'at', 'status', 'detail']
+    INVITES: ['id', 'employeeId', 'emailHash', 'at', 'status', 'detail'],
+    PROJECTS: ['id', 'name', 'description', 'status', 'createdAt'],
+    COMMENTS: ['id', 'taskId', 'authorType', 'authorId', 'authorName', 'text', 'createdAt'],
+    ACTIVITY: ['id', 'taskId', 'at', 'actorType', 'actorId', 'action', 'detail']
   }
 };
 
@@ -25,7 +32,7 @@ var DEFAULT_CONFIG = {
 // back to the ACCESS_MODE gate).
 var DEMO_CONFIG = {
   ENABLED: true,
-  LIMITS: { EMPLOYEES: 100, TASKS: 500, SESSIONS: 3000, INVITES: 1000 },
+  LIMITS: { EMPLOYEES: 100, TASKS: 500, SESSIONS: 3000, INVITES: 1000, PROJECTS: 50, COMMENTS: 1500, ACTIVITY: 6000 },
   // Invitation email. Because anonymous visitors can type any address, sending
   // is capped globally and per recipient per UTC day. ENABLED=false (or Script
   // Property EMAIL_DISABLED=true) turns sending off entirely.
@@ -38,7 +45,10 @@ function getContext_(overrides) {
       EMPLOYEES: DEFAULT_CONFIG.SHEETS.EMPLOYEES,
       TASKS: DEFAULT_CONFIG.SHEETS.TASKS,
       SESSIONS: DEFAULT_CONFIG.SHEETS.SESSIONS,
-      INVITES: DEFAULT_CONFIG.SHEETS.INVITES
+      INVITES: DEFAULT_CONFIG.SHEETS.INVITES,
+      PROJECTS: DEFAULT_CONFIG.SHEETS.PROJECTS,
+      COMMENTS: DEFAULT_CONFIG.SHEETS.COMMENTS,
+      ACTIVITY: DEFAULT_CONFIG.SHEETS.ACTIVITY
     },
     headers: DEFAULT_CONFIG.HEADERS
   };
@@ -50,11 +60,18 @@ function getContext_(overrides) {
   return ctx;
 }
 
+var spreadsheetMemo_ = null;
+
+// One Apps Script execution handles one request, so remembering the handle for
+// the rest of that execution saves a SpreadsheetApp.openById per sheet read.
 function getSpreadsheet_() {
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty('SPREADSHEET_ID');
   if (id) {
-    return SpreadsheetApp.openById(id);
+    if (spreadsheetMemo_ && spreadsheetMemo_.id === id) return spreadsheetMemo_.ss;
+    var opened = SpreadsheetApp.openById(id);
+    spreadsheetMemo_ = { id: id, ss: opened };
+    return opened;
   }
   var active = SpreadsheetApp.getActiveSpreadsheet();
   if (active) {

@@ -81,6 +81,7 @@ function createEnv(opts) {
   const props = new Map();
   if (opts.pin !== false) props.set('SPREADSHEET_ID', ss.id);
   const log = { logger: [], mail: [], opened: [], propWrites: [], lockEvents: [] };
+  const cacheStore = new Map();
   let lockHeld = false;
   let externalLock = false; // simulates another execution holding the script lock
 
@@ -111,6 +112,7 @@ function createEnv(opts) {
         deleteProperty: k => { props.delete(k); }
       })
     },
+    CacheService: { getScriptCache: () => ({ get: k => (cacheStore.has(k) ? cacheStore.get(k) : null), put: (k, v) => { cacheStore.set(k, String(v)); } }) },
     LockService: {
       getScriptLock: () => {
         let mine = false;
@@ -148,6 +150,7 @@ function createEnv(opts) {
     arm: v => props.set('ADMIN_MODE', v),
     holdLockExternally: on => { externalLock = on; },
     isLockHeld: () => lockHeld,
+    cacheStore: cacheStore,
     run: code => vm.runInContext(code, sandbox)
   };
 }

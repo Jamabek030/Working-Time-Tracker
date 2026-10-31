@@ -115,7 +115,7 @@ test('buildReportCsv: BOM, CRLF, header, one line per session, UTC columns', () 
   assertEq(lines.length, 4);
   assertEq(lines[3], '');
   assert(lines[0].includes('"Сотрудник"') && lines[0].includes('"Date (UTC)"'), lines[0]);
-  assertEq(lines[1].split(',').length, 9);
+  assertEq(lines[1].split(',').length, 10, 'employee, email, project, task, date, start, end, hms, seconds, status');
   assert(lines[1].includes('"2026-01-02"') && lines[1].includes('"2026-01-02 09:00:00"') && lines[1].includes('"2026-01-02 10:30:15"'), lines[1]);
   assert(lines[1].includes('"01:30:15"') && lines[1].includes(',5415,'), lines[1]);
   assert(lines[1].includes('"пауза"'), 'status localized');
@@ -133,7 +133,7 @@ test('buildReportCsv: empty report is a valid header-only file', () => {
 });
 test('buildReportCsv: duration column equals the in-range overlap, so it matches the report', () => {
   const csv = pure.buildReportCsv(rows, labels);
-  const total = csv.split('\r\n').slice(1, 3).map(l => Number(l.split(',')[7])).reduce((a, b) => a + b, 0);
+  const total = csv.split('\r\n').slice(1, 3).map(l => Number(l.split(',')[8])).reduce((a, b) => a + b, 0);
   assertEq(total, Math.round((5415000 + 1000) / 1000));
 });
 

@@ -3,137 +3,127 @@
   'use strict';
 
   var T = WTT.t;
-  var S = { employees: [], dash: null, detail: null, report: null, info: null, lastCsv: '' };
+  var U = WTTU;
+  var h = U.h, clear = U.clear, setStatus = U.setStatus, call = U.call, td = U.td, th = U.th;
+  var S = { employees: [], tasks: [], projects: [], dash: null, empDetail: null, taskDetail: null, taskDetailId: null, report: null, info: null, lastCsv: '' };
+  var nav;
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  var fullName = U.fullName;
+  function val(sel) { return $(sel).value; }
 
-  // All DOM is built with textContent: user-controlled text (names, emails,
-  // task titles) is never parsed as HTML.
-  function h(tag, props, kids) {
-    var e = document.createElement(tag);
-    props = props || {};
-    Object.keys(props).forEach(function (k) {
-      var v = props[k];
-      if (v === undefined || v === null || v === false) return;
-      if (k === 'text') e.textContent = v;
-      else if (k === 'class') e.className = v;
-      else if (k === 'on') Object.keys(v).forEach(function (ev) { e.addEventListener(ev, v[ev]); });
-      else e.setAttribute(k, v === true ? '' : v);
-    });
-    (kids || []).forEach(function (c) {
-      if (c === null || c === undefined || c === false) return;
-      e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-    });
-    return e;
+  // ============================================================ shared selects
+  function fillSelect(sel, firstLabel, options, keep) {
+    var cur = keep === false ? '' : sel.value;
+    clear(sel);
+    if (firstLabel !== null) sel.appendChild(h('option', { value: '', text: firstLabel }));
+    options.forEach(function (o) { sel.appendChild(h('option', { value: o.value, text: o.text })); });
+    sel.value = cur;
+    if (sel.value !== cur) sel.value = '';
   }
-  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
-  function setStatus(el, kind, text) { el.className = 'status' + (kind ? ' ' + kind : ''); el.textContent = text || ''; }
-  function fullName(e) { return [e.lastName, e.firstName, e.middleName].filter(Boolean).join(' '); }
-  function pill(kind, text) { return h('span', { class: 'pill ' + kind, text: text }); }
-  function statePill(state) { return pill('st-' + state, T('state.' + state)); }
-  function statusPill(status) { return pill(status || 'none', status ? T('status.' + status) : '—'); }
-  function utcToday() { return new Date().toISOString().slice(0, 10); }
-  function utcDaysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
-
-  function call(fn) {
-    var args = Array.prototype.slice.call(arguments, 1);
-    return new Promise(function (resolve, reject) {
-      var runner = google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(function (err) { reject(new Error(WTT.errorText(err))); });
-      runner[fn].apply(runner, args);
-    });
+  function refreshSelects() {
+    var emps = S.employees.map(function (e) { return { value: e.id, text: fullName(e) }; });
+    var projs = S.projects.map(function (p) { return { value: p.id, text: p.name }; });
+    fillSelect($('#tf-project'), T('task.noProject'), projs);
+    fillSelect($('#tf-employee'), null, emps);
+    fillSelect($('#tk-project'), T('state.all'), [{ value: '__none', text: T('task.noProject') }].concat(projs));
+    fillSelect($('#tk-employee'), T('state.all'), [{ value: '__none', text: T('task.unassigned') }].concat(emps));
+    fillSelect($('#report-employee'), T('rep.allEmployees'), emps);
+    fillSelect($('#hist-employee'), T('rep.allEmployees'), emps);
+    fillSelect($('#hist-project'), T('hist.allProjects'), projs);
   }
 
-  function td(label, content) {
-    var cell = h('td', { 'data-label': label });
-    if (content !== null && content !== undefined) cell.appendChild(typeof content === 'string' ? document.createTextNode(content) : content);
-    return cell;
-  }
-  function th(key) { return h('th', { text: T(key) }); }
-
-  // ---------- Tabs ----------
-  function showTab(name) {
-    $$('.tab').forEach(function (b) {
-      var on = b.getAttribute('data-tab') === name;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-selected', on ? 'true' : 'false');
-      b.setAttribute('tabindex', on ? '0' : '-1');
-    });
-    $$('.tab-panel').forEach(function (p) { p.classList.toggle('active', p.id === 'tab-' + name); });
-    if (name === 'dashboard') loadDashboard();
-  }
-  $$('.tab').forEach(function (b) {
-    b.addEventListener('click', function () { showTab(b.getAttribute('data-tab')); });
-    b.addEventListener('keydown', function (ev) {
-      var tabs = $$('.tab'), i = tabs.indexOf(b), n = null;
-      if (ev.key === 'ArrowRight') n = tabs[(i + 1) % tabs.length];
-      if (ev.key === 'ArrowLeft') n = tabs[(i + tabs.length - 1) % tabs.length];
-      if (n) { ev.preventDefault(); n.focus(); showTab(n.getAttribute('data-tab')); }
-    });
-  });
-
-  // ---------- Email capability ----------
+  // ============================================================ email capability
   function renderEmailInfo() {
-    var box = $('#email-info');
-    var info = S.info;
+    var box = $('#email-info'), info = S.info, set = $('#set-email-status');
     if (!info) { box.hidden = true; return; }
     var key, params;
     if (!info.email.enabled) key = 'mail.info.disabled';
     else if (!info.email.available) key = 'mail.info.unavailable';
     else { key = 'mail.info.ready'; params = { remaining: info.email.remaining }; }
-    box.textContent = T(key, params);
-    box.hidden = false;
-  }
-
-  function inviteText(inv) {
-    if (!inv) return T('invite.none');
-    var key = 'invite.' + inv.status;
-    return T(key);
+    box.textContent = T(key, params); box.hidden = false;
+    setStatus(set, info.email.enabled && info.email.available ? 'ok' : 'warn', T(key, params));
   }
   function inviteBadge(inv) {
-    if (!inv) return pill('inv-none', T('invite.none'));
-    var ok = inv.status === 'sent';
-    var bad = inv.status === 'failed' || inv.status === 'unavailable';
-    return pill(ok ? 'inv-ok' : (bad ? 'inv-bad' : 'inv-warn'), T('invite.' + inv.status));
+    if (!inv) return U.pill('inv-none', T('invite.none'));
+    var ok = inv.status === 'sent', bad = inv.status === 'failed' || inv.status === 'unavailable';
+    return U.pill(ok ? 'inv-ok' : (bad ? 'inv-bad' : 'inv-warn'), T('invite.' + inv.status));
   }
 
-  // ---------- Dashboard ----------
+  // ============================================================ overview
   var dashForm = $('#dash-form');
-  dashForm.from.value = utcDaysAgo(6);
-  dashForm.to.value = utcToday();
+  dashForm.from.value = U.utcDaysAgo(6);
+  dashForm.to.value = U.utcToday();
   dashForm.addEventListener('submit', function (ev) { ev.preventDefault(); loadDashboard(); });
 
   function loadDashboard() {
     var status = $('#dash-status');
     setStatus(status, '', T('common.loading'));
-    call('api_getDashboard', dashForm.from.value, dashForm.to.value).then(function (d) {
-      S.dash = d;
-      setStatus(status, '', '');
-      renderDashboard();
+    return call('api_getDashboard', dashForm.from.value, dashForm.to.value).then(function (d) {
+      S.dash = d; setStatus(status, '', ''); renderDashboard();
     }).catch(function (err) { setStatus(status, 'error', err.message); });
+  }
+
+  var DONUT_COLORS = ['#2563eb', '#f97316', '#10b981', '#8b5cf6', '#ec4899', '#eab308', '#0ea5e9'];
+  var STATUS_ORDER = ['draft', 'available', 'assigned', 'in_progress', 'paused', 'completed', 'replaced'];
+
+  function actorLabel(a) { return a.actorType === 'employee' ? (a.actorName || T('role.employee')) : T('role.manager'); }
+  function detailText(action, detail) {
+    if (!detail) return '';
+    if (action === 'created') return T('priority.' + detail);
+    if (action === 'updated') {
+      return detail.split(';').map(function (part) {
+        var kv = part.split('=');
+        if (kv[0] === 'priority') return T('act.detail.priority', { v: T('priority.' + kv[1]) });
+        if (kv[0] === 'due') return T('act.detail.due', { v: kv[1] === 'none' ? T('task.noDeadline') : WTT.fmtYmd(kv[1]) });
+        return part;
+      }).join('; ');
+    }
+    return detail;
+  }
+  function activityItem(a, withTask) {
+    var d = detailText(a.action, a.detail);
+    return h('li', {}, [
+      h('div', {}, [
+        h('strong', { text: actorLabel(a) }), ' ' + T('act.' + a.action),
+        withTask && a.taskTitle ? h('span', {}, [' ', h('em', { class: 'task-ref', text: a.taskTitle })]) : null,
+        d ? h('span', { class: 'muted', text: ' · ' + d }) : null
+      ]),
+      h('div', { class: 'muted small', text: WTT.fmtDateTime(a.at) })
+    ]);
+  }
+  function commentItem(c, withTask) {
+    var who = c.authorType === 'employee' ? (c.authorName || T('role.employee')) : T('role.manager');
+    return h('li', { class: 'comment ' + c.authorType }, [
+      h('div', { class: 'comment-head' }, [
+        h('span', { class: 'avatar small', 'aria-hidden': 'true', text: c.authorType === 'employee' ? U.initials(who) : 'M' }),
+        h('strong', { text: who }),
+        withTask && c.taskTitle ? h('span', { class: 'muted' }, [' · ', h('em', { class: 'task-ref', text: c.taskTitle })]) : null,
+        h('span', { class: 'muted small', text: ' · ' + WTT.fmtDateTime(c.createdAt) })
+      ]),
+      h('div', { class: 'comment-text', text: c.text })
+    ]);
   }
 
   function renderDashboard() {
     var d = S.dash;
     if (!d) return;
-    $('#m-total').textContent = d.metrics.totalEmployees;
-    $('#m-working').textContent = d.metrics.working;
-    $('#m-paused').textContent = d.metrics.paused;
-    $('#m-active-tasks').textContent = d.metrics.activeTasks;
-    $('#m-done-tasks').textContent = d.metrics.completedTasks;
-    $('#m-tracked').textContent = WTT.fmtMs(d.metrics.trackedMs);
+    var m = d.metrics, c = m.tasksByStatus;
+    $('#m-total').textContent = m.totalEmployees;
+    $('#m-working').textContent = m.working;
+    $('#m-paused').textContent = m.paused;
+    $('#m-open-tasks').textContent = c.assigned + c.in_progress + c.paused;
+    $('#m-done-tasks').textContent = c.completed;
+    $('#m-overdue').textContent = m.overdueTasks;
+    $('#m-tracked').textContent = WTT.fmtMs(m.trackedMs);
 
-    var chart = $('#chart');
-    clear(chart);
-    var max = 0;
-    d.daily.forEach(function (x) { if (x.ms > max) max = x.ms; });
+    // daily chart
+    var chart = $('#chart'); clear(chart);
+    var max = 0; d.daily.forEach(function (x) { if (x.ms > max) max = x.ms; });
     var hasData = max > 0;
-    $('#daily-empty').hidden = hasData;
-    chart.hidden = !hasData;
-    $('#daily-table').hidden = !hasData;
-    chart.setAttribute('aria-label', T('dash.chartLabel', { total: WTT.fmtMs(d.metrics.trackedMs), days: d.daily.length }));
+    $('#daily-empty').hidden = hasData; chart.hidden = !hasData; $('#daily-table').hidden = !hasData;
+    chart.setAttribute('aria-label', T('dash.chartLabel', { total: WTT.fmtMs(m.trackedMs), days: d.daily.length }));
     if (hasData) {
       d.daily.forEach(function (x) {
         var pct = Math.max(2, Math.round(x.ms / max * 100));
@@ -144,69 +134,284 @@
         ]));
       });
     }
-    var dt = $('#daily-table tbody');
-    clear(dt);
-    d.daily.forEach(function (x) {
-      dt.appendChild(h('tr', {}, [td(T('col.date'), x.date), td(T('col.duration'), WTT.fmtMs(x.ms))]));
+    var dt = $('#daily-table tbody'); clear(dt);
+    d.daily.forEach(function (x) { dt.appendChild(h('tr', {}, [td(T('col.date'), x.date), td(T('col.duration'), WTT.fmtMs(x.ms))])); });
+
+    // time by project (donut + legend)
+    var legend = $('#donut-legend'); clear(legend);
+    var total = d.byProject.reduce(function (a, x) { return a + x.ms; }, 0);
+    $('#donut-empty').hidden = total > 0; $('#donut-wrap').hidden = total === 0;
+    if (total > 0) {
+      var acc = 0, stops = [];
+      d.byProject.forEach(function (p, i) {
+        var color = DONUT_COLORS[i % DONUT_COLORS.length];
+        var from = acc / total * 100; acc += p.ms; var to = acc / total * 100;
+        stops.push(color + ' ' + from.toFixed(2) + '% ' + to.toFixed(2) + '%');
+        legend.appendChild(h('li', {}, [h('span', { class: 'dot', style: 'background:' + color }), h('span', { class: 'legend-name', text: p.name || T('task.noProject') }), h('span', { class: 'muted', text: WTT.fmtMs(p.ms) })]));
+      });
+      var donut = $('#donut');
+      donut.style.background = 'conic-gradient(' + stops.join(',') + ')';
+      donut.setAttribute('aria-label', T('dash.byProject') + ': ' + d.byProject.map(function (p) { return (p.name || T('task.noProject')) + ' ' + WTT.fmtMs(p.ms); }).join(', '));
+      $('#donut-total').textContent = WTT.fmtMs(total);
+    }
+
+    // tasks by status
+    var bars = $('#status-bars'); clear(bars);
+    var maxC = Math.max.apply(null, STATUS_ORDER.map(function (s) { return c[s]; }).concat([1]));
+    STATUS_ORDER.forEach(function (s) {
+      if (s === 'replaced' && !c[s]) return;
+      bars.appendChild(h('li', {}, [
+        h('span', { class: 'bar-name' }, [U.taskStatusBadge(s)]),
+        h('span', { class: 'hbar' }, [h('span', { class: 'hbar-fill ts-' + s, style: 'width:' + Math.round(c[s] / maxC * 100) + '%' })]),
+        h('span', { class: 'bar-count', text: String(c[s]) })
+      ]));
+    });
+    bars.appendChild(h('li', { class: 'bar-total' }, [h('span', { text: T('dash.totalTasks') }), h('strong', { text: String(m.totalTasks) })]));
+
+    // workload
+    var wb = $('#workload-table tbody'); clear(wb);
+    $('#workload-empty').hidden = d.workload.length > 0; $('#workload-table').hidden = d.workload.length === 0;
+    d.workload.forEach(function (w) {
+      wb.appendChild(h('tr', {}, [td(T('col.name'), w.name), td(T('col.status'), U.workStateBadge(w.state)), td(T('col.openTasks'), String(w.openTasks)), td(T('col.duration'), WTT.fmtMs(w.ms))]));
     });
 
-    var be = $('#byemp-table tbody');
-    clear(be);
-    $('#byemp-empty').hidden = d.byEmployee.length > 0;
-    $('#byemp-table').hidden = d.byEmployee.length === 0;
-    d.byEmployee.forEach(function (x) {
-      be.appendChild(h('tr', {}, [td(T('col.name'), x.name), td(T('col.duration'), WTT.fmtMs(x.ms))]));
+    var fa = $('#recent-activity'); clear(fa);
+    if (!d.recentActivity.length) fa.appendChild(h('li', { class: 'empty', text: T('dash.noActivity') }));
+    d.recentActivity.forEach(function (a) { fa.appendChild(activityItem(a, true)); });
+    var fc = $('#recent-comments'); clear(fc);
+    if (!d.recentComments.length) fc.appendChild(h('li', { class: 'empty', text: T('dash.noComments') }));
+    d.recentComments.forEach(function (c2) { fc.appendChild(commentItem(c2, true)); });
+  }
+
+  // ============================================================ projects
+  function loadProjects() {
+    return call('api_listProjects').then(function (list) { S.projects = list; refreshSelects(); renderProjects(); }).catch(function (err) {
+      setStatus($('#project-status'), 'error', err.message);
+    });
+  }
+  function renderProjects() {
+    var box = $('#projects-list'); clear(box);
+    $('#projects-empty').hidden = S.projects.length > 0;
+    if (!S.projects.length) return;
+    var rows = S.projects.map(function (p) {
+      var counts = h('div', { class: 'badges' });
+      STATUS_ORDER.forEach(function (s) { if (p.tasksByStatus[s]) counts.appendChild(h('span', { class: 'pill ts-' + s, text: T('tstatus.' + s) + ' ' + p.tasksByStatus[s] })); });
+      if (!p.taskCount) counts.appendChild(h('span', { class: 'muted', text: '—' }));
+      return h('tr', {}, [td(T('task.project'), h('strong', { text: p.name })), td(T('proj.description'), p.description || '—'), td(T('proj.tasks'), String(p.taskCount)), td(T('col.status'), counts), td(T('col.duration'), WTT.fmtMs(p.trackedMs))]);
+    });
+    box.appendChild(U.table(['task.project', 'proj.description', 'proj.tasks', 'col.status', 'col.duration'], rows));
+  }
+  $('#project-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var f = ev.target, st = $('#project-status');
+    setStatus(st, '', T('common.saving'));
+    call('api_createProject', { name: f.name.value, description: f.description.value }).then(function (p) {
+      setStatus(st, 'ok', T('proj.created', { name: p.name }));
+      f.reset(); return loadProjects();
+    }).catch(function (err) { setStatus(st, 'error', err.message); });
+  });
+
+  // ============================================================ tasks
+  var tkSearch = $('#tk-search');
+  function taskFilter() {
+    var today = U.utcToday();
+    return {
+      q: tkSearch.value, projectId: val('#tk-project'), status: val('#tk-status'), priority: val('#tk-priority'),
+      employeeId: val('#tk-employee'), deadline: val('#tk-deadline'), today: today, weekEnd: U.utcDaysAgo(-7)
+    };
+  }
+  ['#tk-project', '#tk-status', '#tk-priority', '#tk-employee', '#tk-deadline'].forEach(function (s) { $(s).addEventListener('change', renderTasks); });
+  tkSearch.addEventListener('input', renderTasks);
+
+  function loadTasks() {
+    setStatus($('#tk-loading'), '', T('common.loading')); $('#tk-loading').hidden = false;
+    return call('api_listTasks').then(function (list) {
+      S.tasks = list; $('#tk-loading').hidden = true; renderTasks();
+    }).catch(function (err) { setStatus($('#tk-loading'), 'error', err.message); });
+  }
+
+  function renderTasks() {
+    if ($('#tk-loading').className.indexOf('error') >= 0) return;
+    var list = window.WTT_FILTER_TASKS(S.tasks, taskFilter());
+    $('#tk-empty').hidden = S.tasks.length > 0;
+    $('#tk-noresults').hidden = !(S.tasks.length > 0 && list.length === 0);
+    $('#tk-table').hidden = list.length === 0;
+    $('#tk-count').textContent = S.tasks.length ? T('emp.count', { shown: list.length, total: S.tasks.length }) : '';
+    var tb = $('#tk-table tbody'); clear(tb);
+    list.forEach(function (t) {
+      var btn = h('button', { type: 'button', class: 'secondary small', text: T('emp.details'), 'aria-label': T('task.detailsFor', { name: t.title }), on: { click: function () { showTask(t.id); } } });
+      tb.appendChild(h('tr', { class: t.overdue ? 'row-overdue' : '' }, [
+        td(T('task.title'), h('strong', { class: 'task-ref', text: t.title })),
+        td(T('task.project'), t.projectName || '—'),
+        td(T('task.assignee'), t.employeeName || h('span', { class: 'muted', text: t.status === 'available' ? T('task.inPool') : T('task.unassigned') })),
+        td(T('col.status'), U.taskStatusBadge(t.displayStatus)),
+        td(T('task.priority'), U.priorityBadge(t.priority)),
+        td(T('task.deadline'), U.dueNode(t)),
+        td(T('col.duration'), WTT.fmtMs(t.trackedMs)),
+        td('', btn)
+      ]));
     });
   }
 
-  // ---------- Create employee ----------
+  // new-task form
+  var taskForm = $('#task-form');
+  function openTaskForm(opts) {
+    opts = opts || {};
+    $('#task-form-card').hidden = false; $('#btn-new-task').setAttribute('aria-expanded', 'true');
+    if (opts.mode) { taskForm.mode.value = opts.mode; syncMode(); }
+    if (opts.employeeId) { taskForm.employeeId.value = opts.employeeId; }
+    taskForm.title.focus();
+  }
+  function closeTaskForm() { $('#task-form-card').hidden = true; $('#btn-new-task').setAttribute('aria-expanded', 'false'); }
+  function syncMode() { $('#tf-employee-wrap').hidden = taskForm.mode.value !== 'assign'; }
+  $('#btn-new-task').addEventListener('click', function () { if ($('#task-form-card').hidden) openTaskForm(); else closeTaskForm(); });
+  $('#btn-cancel-task').addEventListener('click', closeTaskForm);
+  taskForm.mode.addEventListener('change', syncMode);
+  taskForm.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var st = $('#task-form-status');
+    var data = { title: taskForm.title.value, description: taskForm.description.value, projectId: taskForm.projectId.value,
+      priority: taskForm.priority.value, dueDate: taskForm.dueDate.value, mode: taskForm.mode.value, employeeId: taskForm.mode.value === 'assign' ? taskForm.employeeId.value : '' };
+    setStatus(st, '', T('common.saving'));
+    call('api_createTask', data).then(function (t) {
+      var key = data.mode === 'pool' ? 'task.created.pool' : (data.mode === 'assign' ? 'task.created.assign' : 'task.created.draft');
+      setStatus(st, 'ok', T(key, { title: t.title, name: t.employeeName }));
+      taskForm.reset(); syncMode(); S.dash = null;
+      return loadTasks();
+    }).catch(function (err) { setStatus(st, 'error', err.message); });
+  });
+
+  // task details
+  $('#task-details-close').addEventListener('click', function () { $('#task-details-card').hidden = true; S.taskDetail = null; S.taskDetailId = null; });
+  function showTask(id) {
+    var card = $('#task-details-card'), content = $('#task-details-content');
+    S.taskDetailId = id; card.hidden = false; clear(content);
+    content.appendChild(h('div', { class: 'status', text: T('common.loading') }));
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return call('api_getTaskDetails', id).then(function (d) { S.taskDetail = d; renderTaskDetails(); $('#task-details-title').focus({ preventScroll: true }); }).catch(function (err) {
+      clear(content); content.appendChild(h('div', { class: 'status error', text: err.message }));
+    });
+  }
+  function afterTaskChange(id) {
+    S.dash = null;
+    return Promise.all([loadTasks(), showTask(id)]);
+  }
+  function renderTaskDetails() {
+    var d = S.taskDetail; if (!d) return;
+    var t = d.task, content = $('#task-details-content');
+    clear(content);
+    $('#task-details-title').textContent = t.title;
+    var msg = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    content.appendChild(h('div', { class: 'badges' }, [U.taskStatusBadge(t.displayStatus), U.priorityBadge(t.priority), t.overdue ? U.pill('pr-overdue', T('task.overdue')) : null]));
+    if (t.description) content.appendChild(h('p', { class: 'desc', text: t.description }));
+    content.appendChild(h('dl', { class: 'facts' }, [
+      h('dt', { text: T('task.project') }), h('dd', { text: t.projectName || '—' }),
+      h('dt', { text: T('task.assignee') }), h('dd', { text: t.employeeName || (t.status === 'available' ? T('task.inPool') : T('task.unassigned')) }),
+      h('dt', { text: T('task.deadline') }), h('dd', {}, [U.dueNode(t)]),
+      h('dt', { text: T('details.total') }), h('dd', {}, [h('strong', { text: WTT.fmtMs(t.trackedMs) })]),
+      h('dt', { text: T('details.created') }), h('dd', { text: WTT.fmtDateTime(t.createdAt) }),
+      t.assignedAt ? h('dt', { text: T('task.assignedAt') }) : null, t.assignedAt ? h('dd', { text: WTT.fmtDateTime(t.assignedAt) }) : null,
+      t.completedAt ? h('dt', { text: T('details.closed') }) : null, t.completedAt ? h('dd', { text: WTT.fmtDateTime(t.completedAt) }) : null
+    ]));
+
+    // distribution actions (only while the task is not owned)
+    if (t.status === 'draft' || t.status === 'available') {
+      var sel = h('select', { id: 'td-assign-select', 'aria-label': T('task.assignee') }, S.employees.map(function (e) { return h('option', { value: e.id, text: fullName(e) }); }));
+      var pub = t.status === 'draft'
+        ? h('button', { type: 'button', class: 'secondary', text: T('task.publish'), on: { click: function () { act(call('api_publishTask', t.id), 'task.published'); } } })
+        : h('button', { type: 'button', class: 'secondary', text: T('task.unpublish'), on: { click: function () { act(call('api_unpublishTask', t.id), 'task.unpublished'); } } });
+      var asg = h('button', { type: 'button', class: 'primary', text: T('task.assignTo'), on: { click: function () {
+        if (!sel.value) { setStatus(msg, 'error', T('err.employee_required')); return; }
+        act(call('api_assignTaskToEmployee', t.id, sel.value), 'task.assigned');
+      } } });
+      content.appendChild(h('h3', { text: T('task.distribution') }));
+      content.appendChild(h('div', { class: 'row-wrap' }, [pub, h('span', { class: 'muted', text: T('task.or') }), sel, asg]));
+    }
+    function act(promise, okKey) {
+      setStatus(msg, '', T('common.saving'));
+      promise.then(function () { return afterTaskChange(t.id).then(function () { setStatus($('#task-details-content').querySelector('.status'), 'ok', T(okKey)); }); })
+        .catch(function (err) { setStatus(msg, 'error', err.message); });
+    }
+
+    // priority / deadline
+    if (t.status !== 'completed' && t.status !== 'replaced') {
+      var pr = h('select', { id: 'td-priority', 'aria-label': T('task.priority') }, ['low', 'medium', 'high'].map(function (p) { return h('option', { value: p, text: T('priority.' + p) }); }));
+      pr.value = t.priority;
+      var due = h('input', { type: 'date', id: 'td-due', value: t.dueDate || '', 'aria-label': T('task.deadline') });
+      var save = h('button', { type: 'button', class: 'secondary', text: T('common.save'), on: { click: function () { act(call('api_updateTask', t.id, { priority: pr.value, dueDate: due.value }), 'task.updated'); } } });
+      content.appendChild(h('h3', { text: T('task.schedule') }));
+      content.appendChild(h('div', { class: 'row-wrap' }, [h('label', { class: 'field' }, [h('span', { text: T('task.priority') }), pr]), h('label', { class: 'field' }, [h('span', { text: T('task.deadline') }), due]), save]));
+    }
+    content.appendChild(msg);
+
+    // sessions
+    content.appendChild(h('h3', { text: T('details.sessions') }));
+    if (!d.sessions.length) content.appendChild(h('div', { class: 'empty', text: T('details.noSessions') }));
+    else {
+      content.appendChild(U.table(['task.assignee', 'col.start', 'col.end', 'col.duration', 'col.status'], d.sessions.slice().sort(function (a, b) { return a.startTime < b.startTime ? 1 : -1; }).map(function (s) {
+        var dur = s.status === 'active' ? Math.max(0, Date.now() - new Date(s.startTime).getTime()) : (Number(s.durationMs) || 0);
+        return h('tr', {}, [td(T('task.assignee'), s.employeeName), td(T('col.start'), WTT.fmtDateTime(s.startTime)), td(T('col.end'), WTT.fmtDateTime(s.endTime)), td(T('col.duration'), WTT.fmtMs(dur)), td(T('col.status'), U.sessionBadge(s.status))]);
+      })));
+    }
+
+    // activity (audit history)
+    content.appendChild(h('h3', { text: T('task.activity') }));
+    var feed = h('ul', { class: 'feed' });
+    if (!d.activity.length) feed.appendChild(h('li', { class: 'empty', text: T('dash.noActivity') }));
+    d.activity.forEach(function (a) { feed.appendChild(activityItem(a, false)); });
+    content.appendChild(feed);
+
+    // comments
+    content.appendChild(h('h3', { text: T('task.comments') }));
+    var list = h('ul', { class: 'feed comments' });
+    if (!d.comments.length) list.appendChild(h('li', { class: 'empty', text: T('comment.none') }));
+    d.comments.forEach(function (c) { list.appendChild(commentItem(c, false)); });
+    content.appendChild(list);
+    var ta = h('textarea', { rows: '2', maxlength: '1000', id: 'td-comment', 'aria-label': T('comment.reply') });
+    var cstat = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    var send = h('button', { type: 'submit', class: 'primary', text: T('comment.send') });
+    var cform = h('form', { class: 'comment-form' }, [h('label', { class: 'field grow' }, [h('span', { text: T('comment.reply') }), ta]), h('div', { class: 'field actions' }, [send])]);
+    cform.addEventListener('submit', function (ev) {
+      ev.preventDefault(); send.disabled = true; setStatus(cstat, '', T('common.saving'));
+      call('api_addManagerComment', t.id, ta.value).then(function () { S.dash = null; return showTask(t.id); })
+        .catch(function (err) { send.disabled = false; setStatus(cstat, 'error', err.message); });
+    });
+    content.appendChild(cform); content.appendChild(cstat);
+  }
+
+  // ============================================================ employees
   var createForm = $('#create-form');
   createForm.addEventListener('submit', function (ev) {
     ev.preventDefault();
     var data = {};
     new FormData(createForm).forEach(function (v, k) { data[k] = v; });
-    data.sendInvite = $('#send-invite').checked;
-    data.lang = WTT.lang();
+    data.sendInvite = $('#send-invite').checked; data.lang = WTT.lang();
     var status = $('#create-status');
     setStatus(status, '', T('form.creating'));
-    var btn = createForm.querySelector('button[type="submit"]');
-    btn.disabled = true;
+    var btn = createForm.querySelector('button[type="submit"]'); btn.disabled = true;
     call('api_createEmployee', data).then(function (res) {
       var name = [res.employee.lastName, res.employee.firstName].filter(Boolean).join(' ');
-      var inv = res.invite;
-      var bad = inv && (inv.status === 'failed' || inv.status === 'unavailable');
-      var msg = T('form.created', { name: name }) + ' ' + T('invite.result.' + (inv ? inv.status : 'none'));
-      setStatus(status, bad ? 'warn' : 'ok', msg);
-      createForm.reset();
-      $('#send-invite').checked = true;
-      S.dash = null;
-      loadEmployees();
-    }).catch(function (err) {
-      setStatus(status, 'error', err.message);
-    }).then(function () { btn.disabled = false; });
+      var inv = res.invite, bad = inv && (inv.status === 'failed' || inv.status === 'unavailable');
+      setStatus(status, bad ? 'warn' : 'ok', T('form.created', { name: name }) + ' ' + T('invite.result.' + (inv ? inv.status : 'none')));
+      createForm.reset(); $('#send-invite').checked = true; S.dash = null;
+      btn.disabled = false;
+      return loadEmployees();
+    }).catch(function (err) { setStatus(status, 'error', err.message); }).then(function () { btn.disabled = false; });
   });
 
-  // ---------- Employee list: search + filter happen in the browser ----------
-  var searchInput = $('#emp-search');
-  var filterSelect = $('#emp-filter');
+  var searchInput = $('#emp-search'), filterSelect = $('#emp-filter');
   searchInput.addEventListener('input', renderEmployees);
   filterSelect.addEventListener('change', renderEmployees);
 
   function loadEmployees() {
     var loading = $('#employees-loading');
-    setStatus(loading, '', T('common.loading'));
-    loading.hidden = false;
+    setStatus(loading, '', T('common.loading')); loading.hidden = false;
     return call('api_listEmployees').then(function (list) {
-      S.employees = list;
-      loading.hidden = true;
-      renderEmployees();
-      populateReportEmployees();
+      S.employees = list; loading.hidden = true; refreshSelects(); renderEmployees();
     }).catch(function (err) { setStatus(loading, 'error', err.message); });
   }
-
   function renderEmployees() {
-    var table = $('#employees-table'), empty = $('#employees-empty'), noRes = $('#employees-noresults');
-    var count = $('#emp-count');
+    var table = $('#employees-table'), empty = $('#employees-empty'), noRes = $('#employees-noresults'), count = $('#emp-count');
     if ($('#employees-loading').className.indexOf('error') >= 0) return;
     var list = window.WTT_FILTER(S.employees, searchInput.value, filterSelect.value);
     empty.hidden = S.employees.length > 0;
@@ -214,77 +419,43 @@
     noRes.hidden = !(S.employees.length > 0 && list.length === 0);
     table.hidden = list.length === 0;
     count.textContent = S.employees.length ? T('emp.count', { shown: list.length, total: S.employees.length }) : '';
-    var tbody = $('tbody', table);
-    clear(tbody);
+    var tbody = $('tbody', table); clear(tbody);
     list.forEach(function (e) {
-      var btn = h('button', { type: 'button', class: 'secondary small', text: T('emp.details'), 'aria-label': T('emp.detailsFor', { name: fullName(e) }), on: { click: function () { showDetails(e.id); } } });
-      tbody.appendChild(h('tr', {}, [
-        td(T('col.name'), fullName(e)),
-        td(T('col.email'), e.email),
-        td(T('col.status'), statePill(e.workState)),
-        td(T('col.total'), WTT.fmtMs(e.totalMs)),
-        td(T('col.invite'), inviteBadge(e.invite)),
-        td('', btn)
-      ]));
+      var btn = h('button', { type: 'button', class: 'secondary small', text: T('emp.details'), 'aria-label': T('emp.detailsFor', { name: fullName(e) }), on: { click: function () { showEmployee(e.id); } } });
+      tbody.appendChild(h('tr', {}, [td(T('col.name'), fullName(e)), td(T('col.email'), e.email), td(T('col.status'), U.workStateBadge(e.workState)), td(T('col.total'), WTT.fmtMs(e.totalMs)), td(T('col.invite'), inviteBadge(e.invite)), td('', btn)]));
     });
   }
-
   $('#btn-sample').addEventListener('click', function () {
-    var b = $('#btn-sample');
-    b.disabled = true;
-    call('api_loadDemoSample').then(function () { return loadEmployees(); }).catch(function (err) {
+    var b = $('#btn-sample'); b.disabled = true;
+    call('api_loadDemoSample').then(function () { S.dash = null; return loadEmployees(); }).catch(function (err) {
       setStatus($('#employees-empty'), 'error', err.message);
     }).then(function () { b.disabled = false; });
   });
 
-  // ---------- Details ----------
-  $('#details-close').addEventListener('click', function () { $('#details-card').hidden = true; S.detail = null; });
-
-  function showDetails(id) {
+  $('#details-close').addEventListener('click', function () { $('#details-card').hidden = true; S.empDetail = null; });
+  function showEmployee(id) {
     var card = $('#details-card'), content = $('#details-content');
-    card.hidden = false;
-    clear(content);
-    content.appendChild(h('div', { class: 'status', text: T('common.loading') }));
+    card.hidden = false; clear(content); content.appendChild(h('div', { class: 'status', text: T('common.loading') }));
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    call('api_getEmployeeDetails', id).then(function (d) {
-      S.detail = d;
-      renderDetails();
-      $('#details-name').focus({ preventScroll: true });
-    }).catch(function (err) {
-      clear(content);
-      content.appendChild(h('div', { class: 'status error', text: err.message }));
+    return call('api_getEmployeeDetails', id).then(function (d) { S.empDetail = d; renderEmployee(); $('#details-name').focus({ preventScroll: true }); }).catch(function (err) {
+      clear(content); content.appendChild(h('div', { class: 'status error', text: err.message }));
     });
   }
+  function linkWithLang(url) { return url ? url + (url.indexOf('lang=') < 0 ? '&lang=' + WTT.lang() : '') : ''; }
+  function sessionMs(s) { return s.status === 'active' ? Math.max(0, Date.now() - new Date(s.startTime).getTime()) : (Number(s.durationMs) || 0); }
 
-  function linkWithLang(url) {
-    if (!url) return '';
-    return url + (url.indexOf('lang=') < 0 ? '&lang=' + WTT.lang() : '');
-  }
-
-  function sessionMs(s) {
-    if (s.status === 'active') return Math.max(0, Date.now() - new Date(s.startTime).getTime());
-    return Number(s.durationMs) || 0;
-  }
-
-  function renderDetails() {
-    var d = S.detail;
-    if (!d) return;
-    var content = $('#details-content');
-    clear(content);
+  function renderEmployee() {
+    var d = S.empDetail; if (!d) return;
+    var content = $('#details-content'); clear(content);
     $('#details-name').textContent = fullName(d.employee);
     var url = linkWithLang(d.workspaceUrl);
-
-    // Summary
     content.appendChild(h('dl', { class: 'facts' }, [
       h('dt', { text: T('col.email') }), h('dd', { text: d.employee.email }),
-      h('dt', { text: T('details.total') }), h('dd', {}, [h('strong', { text: WTT.fmtMs(d.totalMs) }), d.activeSession ? pill('active', T('details.running')) : null]),
+      h('dt', { text: T('details.total') }), h('dd', {}, [h('strong', { text: WTT.fmtMs(d.totalMs) }), d.activeSession ? U.pill('ss-active', T('details.running')) : null]),
       h('dt', { text: T('col.invite') }), h('dd', {}, [inviteBadge(d.invite), ' ', d.invite && d.invite.at ? h('span', { class: 'muted', text: WTT.fmtDateTime(d.invite.at) }) : null])
     ]));
-    if (d.dataWarnings && d.dataWarnings.length) {
-      content.appendChild(h('div', { class: 'status warn', text: T('details.warnings', { n: d.dataWarnings.length }) }));
-    }
+    if (d.dataWarnings && d.dataWarnings.length) content.appendChild(h('div', { class: 'status warn', text: T('details.warnings', { n: d.dataWarnings.length }) }));
 
-    // Workspace link (independent of email delivery)
     var linkInput = h('input', { type: 'text', readonly: true, class: 'mono link-input', value: url, id: 'ws-link', 'aria-label': T('details.workspaceLink') });
     var linkStatus = h('span', { class: 'muted', role: 'status', 'aria-live': 'polite' });
     var copyBtn = h('button', { type: 'button', class: 'secondary', text: T('details.copyLink'), on: { click: function () {
@@ -294,214 +465,155 @@
     } } });
     var openLink = h('a', { class: 'btn secondary', href: url, target: '_blank', rel: 'noopener', text: T('details.openWorkspace') });
     var resendBtn = h('button', { type: 'button', class: 'secondary', text: d.invite && d.invite.status === 'sent' ? T('invite.resend') : (d.invite && d.invite.status ? T('invite.retry') : T('invite.send')) });
-    var invStatus = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
+    var invStatus = h('div', { class: 'status', role: 'status', 'aria-live': 'polite', id: 'invite-status' });
     resendBtn.addEventListener('click', function () {
-      resendBtn.disabled = true;
-      setStatus(invStatus, '', T('invite.sending'));
+      resendBtn.disabled = true; setStatus(invStatus, '', T('invite.sending'));
       call('api_resendInvitation', d.employee.id, WTT.lang()).then(function (res) {
         var bad = res.status === 'failed' || res.status === 'unavailable';
-        setStatus(invStatus, bad ? 'warn' : 'ok', T('invite.result.' + res.status));
-        return Promise.all([loadEmployees(), call('api_getEmployeeDetails', d.employee.id).then(function (nd) { S.detail = nd; })]).then(function () {
-          // keep the result message visible after the panel is re-rendered
-          renderDetails();
-          setStatus($('#invite-status'), bad ? 'warn' : 'ok', T('invite.result.' + res.status));
+        return Promise.all([loadEmployees(), call('api_getEmployeeDetails', d.employee.id).then(function (nd) { S.empDetail = nd; })]).then(function () {
+          renderEmployee(); setStatus($('#invite-status'), bad ? 'warn' : 'ok', T('invite.result.' + res.status));
         });
       }).catch(function (err) { setStatus(invStatus, 'error', err.message); }).then(function () { resendBtn.disabled = false; });
     });
-    invStatus.id = 'invite-status';
     content.appendChild(h('h3', { text: T('details.workspaceLink') }));
     content.appendChild(h('div', { class: 'link-row' }, [linkInput, copyBtn, openLink]));
     content.appendChild(linkStatus);
     content.appendChild(h('p', { class: 'hint', text: T('details.linkNote') }));
-    content.appendChild(h('div', { class: 'row-wrap' }, [resendBtn]));
-    content.appendChild(invStatus);
-
-    // Rotate token
     var rotateBtn = h('button', { type: 'button', class: 'warn', text: T('details.rotate'), on: { click: function () {
       if (!confirm(T('details.rotateConfirm'))) return;
       rotateBtn.disabled = true;
-      call('api_rotateWorkspaceToken', d.employee.id).then(function () { showDetails(d.employee.id); }).catch(function (err) {
-        rotateBtn.disabled = false;
-        setStatus(invStatus, 'error', err.message);
-      });
+      call('api_rotateWorkspaceToken', d.employee.id).then(function () { showEmployee(d.employee.id); }).catch(function (err) { rotateBtn.disabled = false; setStatus(invStatus, 'error', err.message); });
     } } });
-    content.appendChild(h('div', { class: 'row-wrap' }, [rotateBtn]));
+    content.appendChild(h('div', { class: 'row-wrap' }, [resendBtn, rotateBtn]));
+    content.appendChild(invStatus);
 
-    // Assign task
-    var input = h('input', { name: 'title', required: true, maxlength: '500', id: 'assign-title' });
-    var formStatus = h('div', { class: 'status', role: 'status', 'aria-live': 'polite' });
-    var submit = h('button', { type: 'submit', class: 'primary', text: T('details.assign') });
-    var form = h('form', { class: 'assign' }, [
-      h('label', { class: 'field grow' }, [h('span', { text: T('details.assignLabel') }), input]),
-      h('div', { class: 'field actions' }, [submit])
-    ]);
-    form.addEventListener('submit', function (ev) {
-      ev.preventDefault();
-      var title = input.value.trim();
-      if (!title) return;
-      submit.disabled = true;
-      setStatus(formStatus, '', T('details.assigning'));
-      call('api_assignTask', d.employee.id, title).then(function () {
-        S.dash = null;
-        showDetails(d.employee.id);
-        loadEmployees();
-      }).catch(function (err) { submit.disabled = false; setStatus(formStatus, 'error', err.message); });
-    });
-    content.appendChild(h('h3', { text: T('details.newTask') }));
-    content.appendChild(form);
-    content.appendChild(formStatus);
-
-    // Task history with the sessions of each task
-    content.appendChild(h('h3', { text: T('details.tasks') }));
-    if (!d.tasks.length) {
-      content.appendChild(h('div', { class: 'status', text: T('details.noTasks') }));
-    } else {
-      d.tasks.slice().sort(function (a, b) { return a.createdAt < b.createdAt ? 1 : -1; }).forEach(function (t) {
-        var ss = d.sessions.filter(function (s) { return s.taskId === t.id; }).sort(function (a, b) { return a.startTime < b.startTime ? 1 : -1; });
-        var total = ss.reduce(function (acc, s) { return acc + sessionMs(s); }, 0);
-        var box = h('article', { class: 'task-card' }, [
-          h('div', { class: 'task-head' }, [
-            h('strong', { class: 'task-title', text: t.title }),
-            statusPill(t.status),
-            h('span', { class: 'muted', text: T('details.taskTotal', { time: WTT.fmtMs(total) }) })
-          ]),
-          h('div', { class: 'muted small', text: T('details.created') + ': ' + WTT.fmtDateTime(t.createdAt) + (t.completedAt ? ' · ' + T('details.closed') + ': ' + WTT.fmtDateTime(t.completedAt) : '') })
-        ]);
-        if (ss.length) {
-          var tb = h('tbody');
-          ss.forEach(function (s) {
-            tb.appendChild(h('tr', {}, [
-              td(T('col.start'), WTT.fmtDateTime(s.startTime)),
-              td(T('col.end'), WTT.fmtDateTime(s.endTime)),
-              td(T('col.duration'), WTT.fmtMs(sessionMs(s))),
-              td(T('col.status'), statusPill(s.status))
-            ]));
-          });
-          box.appendChild(h('div', { class: 'table-wrap' }, [h('table', { class: 'stack' }, [h('thead', {}, [h('tr', {}, [th('col.start'), th('col.end'), th('col.duration'), th('col.status')])]), tb])]));
-        } else {
-          box.appendChild(h('div', { class: 'muted small', text: T('details.noSessions') }));
-        }
-        content.appendChild(box);
-      });
+    content.appendChild(h('div', { class: 'row-between' }, [h('h3', { text: T('details.tasks') }),
+      h('button', { type: 'button', class: 'primary small', text: T('task.newFor'), on: { click: function () { nav.show('tasks'); openTaskForm({ mode: 'assign', employeeId: d.employee.id }); } } })]));
+    if (!d.tasks.length) content.appendChild(h('div', { class: 'empty', text: T('details.noTasks') }));
+    else {
+      content.appendChild(U.table(['task.title', 'task.project', 'col.status', 'task.priority', 'task.deadline', 'col.duration', ''], d.tasks.slice().sort(function (a, b) { return a.createdAt < b.createdAt ? 1 : -1; }).map(function (t) {
+        var open = h('button', { type: 'button', class: 'secondary small', text: T('emp.details'), on: { click: function () { nav.show('tasks'); showTask(t.id); } } });
+        return h('tr', { class: t.overdue ? 'row-overdue' : '' }, [td(T('task.title'), h('strong', { class: 'task-ref', text: t.title })), td(T('task.project'), t.projectName || '—'), td(T('col.status'), U.taskStatusBadge(t.displayStatus)), td(T('task.priority'), U.priorityBadge(t.priority)), td(T('task.deadline'), U.dueNode(t)), td(T('col.duration'), WTT.fmtMs(t.trackedMs)), td('', open)]);
+      })));
     }
   }
 
-  // ---------- Reports ----------
+  // ============================================================ reports
   var reportForm = $('#report-form');
-  reportForm.from.value = utcDaysAgo(29);
-  reportForm.to.value = utcToday();
-
-  function populateReportEmployees() {
-    var sel = $('#report-employee');
-    var keep = sel.value;
-    clear(sel);
-    sel.appendChild(h('option', { value: '', text: T('rep.allEmployees') }));
-    S.employees.forEach(function (e) { sel.appendChild(h('option', { value: e.id, text: fullName(e) })); });
-    sel.value = keep;
-    if (sel.value !== keep) sel.value = '';
-  }
-
+  reportForm.from.value = U.utcDaysAgo(29); reportForm.to.value = U.utcToday();
   reportForm.addEventListener('submit', function (ev) {
     ev.preventDefault();
     var status = $('#report-status');
-    setStatus(status, '', T('rep.generating'));
-    $('#report-content').textContent = '';
-    $('#csv-fallback').hidden = true;
+    setStatus(status, '', T('rep.generating')); $('#report-content').textContent = ''; $('#csv-fallback').hidden = true;
     var from = reportForm.from.value, to = reportForm.to.value;
     call('api_generateReport', from, to).then(function (rows) {
-      S.report = { rows: rows, from: from, to: to };
-      setStatus(status, '', '');
-      $('#btn-csv').disabled = false;
-      renderReport();
+      S.report = { rows: rows, from: from, to: to }; setStatus(status, '', ''); $('#btn-csv').disabled = false; renderReport();
     }).catch(function (err) { S.report = null; $('#btn-csv').disabled = true; setStatus(status, 'error', err.message); });
   });
   $('#report-employee').addEventListener('change', function () { if (S.report) renderReport(); });
 
   function renderReport() {
-    var r = S.report;
-    var content = $('#report-content');
-    var status = $('#report-status');
+    var r = S.report, content = $('#report-content'), status = $('#report-status');
     clear(content);
     if (!r) return;
     var empId = $('#report-employee').value;
     var rows = r.rows.filter(function (x) { return !empId || x.employeeId === empId; });
-    if (!rows.length) {
-      setStatus(status, '', '');
-      content.appendChild(h('div', { class: 'status', text: T('rep.empty') }));
-      return;
-    }
+    if (!rows.length) { setStatus(status, '', ''); content.appendChild(h('div', { class: 'empty', text: T('rep.empty') })); return; }
     var grand = rows.reduce(function (a, x) { return a + x.totalMs; }, 0);
     setStatus(status, '', T('rep.found', { n: rows.length }) + ' · ' + T('rep.grandTotal', { time: WTT.fmtMs(grand) }));
     rows.forEach(function (row) {
-      var card = h('section', { class: 'card inner' }, [
-        h('div', { class: 'row-between' }, [
-          h('h3', { class: 'no-margin', text: row.name }),
-          h('div', { class: 'status no-margin' }, [T('rep.totalInRange') + ': ', h('strong', { text: WTT.fmtMs(row.totalMs) })])
-        ])
-      ]);
+      var card = h('section', { class: 'card inner' }, [h('div', { class: 'row-between' }, [h('h3', { class: 'no-margin', text: row.name }), h('div', { class: 'status no-margin' }, [T('rep.totalInRange') + ': ', h('strong', { text: WTT.fmtMs(row.totalMs) })])])]);
       if (row.sessions.length) {
-        var tb = h('tbody');
-        row.sessions.forEach(function (s) {
-          tb.appendChild(h('tr', {}, [
-            td(T('col.task'), s.taskTitle), td(T('col.start'), WTT.fmtDateTime(s.startTime)), td(T('col.end'), WTT.fmtDateTime(s.endTime)),
-            td(T('rep.inRange'), WTT.fmtMs(s.overlapMs)), td(T('col.status'), statusPill(s.status))
-          ]));
-        });
-        card.appendChild(h('div', { class: 'table-wrap' }, [h('table', { class: 'stack' }, [h('thead', {}, [h('tr', {}, [th('col.task'), th('col.start'), th('col.end'), th('rep.inRange'), th('col.status')])]), tb])]));
-      } else {
-        card.appendChild(h('div', { class: 'status', text: T('rep.noSessions') }));
-      }
+        card.appendChild(U.table(['task.title', 'task.project', 'col.start', 'col.end', 'rep.inRange', 'col.status'], row.sessions.map(function (s) {
+          return h('tr', {}, [td(T('task.title'), s.taskTitle), td(T('task.project'), s.projectName || '—'), td(T('col.start'), WTT.fmtDateTime(s.startTime)), td(T('col.end'), WTT.fmtDateTime(s.endTime)), td(T('rep.inRange'), WTT.fmtMs(s.overlapMs)), td(T('col.status'), U.sessionBadge(s.status))]);
+        })));
+      } else card.appendChild(h('div', { class: 'empty', text: T('rep.noSessions') }));
       if (row.tasksCreatedInRange && row.tasksCreatedInRange.length) {
         card.appendChild(h('h4', { text: T('rep.tasksCreated') }));
-        var tb2 = h('tbody');
-        row.tasksCreatedInRange.forEach(function (tk) {
-          tb2.appendChild(h('tr', {}, [td(T('col.task'), tk.title), td(T('col.status'), statusPill(tk.status)), td(T('details.created'), WTT.fmtDateTime(tk.createdAt)), td(T('details.closed'), WTT.fmtDateTime(tk.completedAt))]));
-        });
-        card.appendChild(h('div', { class: 'table-wrap' }, [h('table', { class: 'stack' }, [h('thead', {}, [h('tr', {}, [th('col.task'), th('col.status'), th('details.created'), th('details.closed')])]), tb2])]));
+        card.appendChild(U.table(['task.title', 'col.status', 'details.created', 'details.closed'], row.tasksCreatedInRange.map(function (tk) {
+          return h('tr', {}, [td(T('task.title'), tk.title), td(T('col.status'), U.pill('ts-' + (tk.status === 'active' ? 'assigned' : tk.status), T('tstatus.' + (tk.status === 'active' ? 'assigned' : tk.status)))), td(T('details.created'), WTT.fmtDateTime(tk.createdAt)), td(T('details.closed'), WTT.fmtDateTime(tk.completedAt))]);
+        })));
       }
       content.appendChild(card);
     });
   }
 
-  // ---------- CSV export (built on the server from the same report logic) ----------
   $('#btn-csv').addEventListener('click', function () {
     if (!S.report) return;
     var btn = $('#btn-csv'), status = $('#report-status');
-    btn.disabled = true;
-    setStatus(status, '', T('rep.exporting'));
+    btn.disabled = true; setStatus(status, '', T('rep.exporting'));
     call('api_exportReportCsv', S.report.from, S.report.to, $('#report-employee').value, WTT.lang()).then(function (res) {
-      S.lastCsv = res.csv;
-      $('#csv-text').value = res.csv;
-      $('#csv-fallback').hidden = false;
+      S.lastCsv = res.csv; $('#csv-text').value = res.csv; $('#csv-fallback').hidden = false;
       try {
         var blob = new Blob([res.csv], { type: 'text/csv;charset=utf-8' });
         var url = URL.createObjectURL(blob);
         var a = h('a', { href: url, download: res.filename, style: 'display:none' });
-        document.body.appendChild(a);
-        a.click();
+        document.body.appendChild(a); a.click();
         setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
         setStatus(status, 'ok', T('rep.exported', { name: res.filename, n: res.rows }));
-      } catch (e) {
-        setStatus(status, 'warn', T('rep.exportManual', { name: res.filename }));
-      }
+      } catch (e) { setStatus(status, 'warn', T('rep.exportManual', { name: res.filename })); }
     }).catch(function (err) { setStatus(status, 'error', err.message); }).then(function () { btn.disabled = false; });
   });
 
-  // ---------- Language ----------
-  WTT.onChange(function () {
-    renderEmailInfo();
-    renderEmployees();
-    populateReportEmployees();
-    renderDashboard();
-    renderDetails();
-    if (S.report) renderReport();
+  // ============================================================ work history
+  var histForm = $('#history-form');
+  histForm.from.value = U.utcDaysAgo(29); histForm.to.value = U.utcToday();
+  histForm.addEventListener('submit', function (ev) { ev.preventDefault(); loadHistory(); });
+  function loadHistory() {
+    var status = $('#history-status'); setStatus(status, '', T('common.loading')); clear($('#history-content'));
+    return call('api_generateReport', histForm.from.value, histForm.to.value).then(function (rows) {
+      S.history = rows; setStatus(status, '', ''); renderHistory();
+    }).catch(function (err) { S.history = null; setStatus(status, 'error', err.message); });
+  }
+  function renderHistory() {
+    var box = $('#history-content'); clear(box);
+    if (!S.history) return;
+    var empId = val('#hist-employee'), projName = val('#hist-project');
+    var projectNameById = {};
+    S.projects.forEach(function (p) { projectNameById[p.id] = p.name; });
+    var items = [];
+    S.history.forEach(function (r) {
+      if (empId && r.employeeId !== empId) return;
+      r.sessions.forEach(function (s) {
+        if (projName && s.projectName !== projectNameById[projName]) return;
+        items.push({ name: r.name, s: s });
+      });
+    });
+    items.sort(function (a, b) { return a.s.startTime < b.s.startTime ? 1 : -1; });
+    if (!items.length) { box.appendChild(h('div', { class: 'empty', text: T('rep.empty') })); return; }
+    var total = items.reduce(function (a, x) { return a + x.s.overlapMs; }, 0);
+    box.appendChild(h('div', { class: 'status' }, [T('hist.sessions', { n: items.length }) + ' · ' + T('rep.totalInRange') + ': ', h('strong', { text: WTT.fmtMs(total) })]));
+    box.appendChild(U.table(['col.name', 'task.title', 'task.project', 'col.start', 'col.end', 'rep.inRange', 'col.status'], items.map(function (x) {
+      return h('tr', {}, [td(T('col.name'), x.name), td(T('task.title'), x.s.taskTitle), td(T('task.project'), x.s.projectName || '—'), td(T('col.start'), WTT.fmtDateTime(x.s.startTime)), td(T('col.end'), WTT.fmtDateTime(x.s.endTime)), td(T('rep.inRange'), WTT.fmtMs(x.s.overlapMs)), td(T('col.status'), U.sessionBadge(x.s.status))]);
+    })));
+  }
+  $('#hist-employee').addEventListener('change', renderHistory);
+  $('#hist-project').addEventListener('change', renderHistory);
+
+  // ============================================================ settings + language
+  var sel2 = $('#lang-select-2');
+  sel2.addEventListener('change', function () { WTT.setLang(sel2.value, true); });
+
+  WTT.onChange(function (lang) {
+    sel2.value = lang;
+    refreshSelects(); renderEmailInfo(); renderEmployees(); renderTasks(); renderProjects(); renderDashboard();
+    renderEmployee(); renderTaskDetails(); renderHistory(); if (S.report) renderReport();
   });
+
+  function onShow(name) {
+    if (name === 'overview') loadDashboard();
+    if (name === 'tasks') loadTasks();
+    if (name === 'projects') loadProjects();
+    if (name === 'history' && !S.history) loadHistory();
+  }
 
   function boot(urlLang) {
     WTT.init(urlLang);
+    sel2.value = WTT.lang();
+    nav = U.setupNav(onShow);
+    nav.show('overview');
     call('api_getAppInfo').then(function (info) { S.info = info; renderEmailInfo(); }).catch(function () { /* optional */ });
-    loadEmployees();
-    loadDashboard();
+    loadProjects(); loadEmployees(); loadTasks();
   }
   try {
     google.script.url.getLocation(function (loc) { boot(loc && loc.parameter && loc.parameter.lang && String(loc.parameter.lang)); });

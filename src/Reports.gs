@@ -33,6 +33,9 @@ function reports_generate_(fromDateStr, toDateStr, ctx) {
     (tasksByEmp[t.employeeId] = tasksByEmp[t.employeeId] || []).push(t);
   });
 
+  var projectNames = {};
+  projects_list_(ctx).forEach(function (p) { projectNames[p.id] = p.name; });
+
   var rows = employees.map(function (emp) {
     var empTasks = tasksByEmp[emp.id] || [];
     var empSessions = sessionsByEmp[emp.id] || [];
@@ -47,6 +50,8 @@ function reports_generate_(fromDateStr, toDateStr, ctx) {
         sessionId: s.id,
         taskId: s.taskId,
         taskTitle: task ? task.title : '(unknown task)',
+        projectName: task && task.projectId ? (projectNames[task.projectId] || '') : '',
+        priority: task ? task.priority : '',
         startTime: s.startTime,
         endTime: s.endTime,
         status: s.status,
@@ -63,7 +68,8 @@ function reports_generate_(fromDateStr, toDateStr, ctx) {
       var created = parseIso_(t.createdAt);
       return created && created.getTime() >= fromMs && created.getTime() <= toMs;
     }).map(function (t) {
-      return { id: t.id, title: t.title, status: t.status, createdAt: t.createdAt, completedAt: t.completedAt };
+      return { id: t.id, title: t.title, status: t.status, createdAt: t.createdAt, completedAt: t.completedAt,
+        projectName: t.projectId ? (projectNames[t.projectId] || '') : '', priority: t.priority, dueDate: t.dueDate };
     });
     return {
       employeeId: emp.id,

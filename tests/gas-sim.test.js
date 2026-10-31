@@ -112,7 +112,7 @@ test('sim: resetDemoData clears and reseeds exactly Employees/Tasks/WorkSessions
   env.ctx.api_createEmployee({ lastName: 'Stale', firstName: 'Row', email: 'stale@example.com', initialTask: 'Old' });
   env.arm('resetDemoData');
   const counts = env.ctx.resetDemoData();
-  assertEq(counts, { employees: 2, tasks: 4, sessions: 8 });
+  assertEq(counts, { employees: 2, tasks: 8, sessions: 8, projects: 3, comments: 3, activity: 32 });
   const emps = env.ctx.employees_list_();
   assertEq(emps.map(e => e.email).sort(), ['alex.rivera@example.com', 'sam.nguyen@example.com']);
   assertEq(note.getRange(1, 1).getValue(), 'keep');
@@ -363,7 +363,7 @@ test('sim: the workspace page opens with an employee token but offers no Manager
 test('sim: api_loadDemoSample works once on an empty demo, then refuses; it only appends', () => {
   const env = createEnv();
   const first = env.ctx.api_loadDemoSample();
-  assertEq(first, { employees: 2, tasks: 4, sessions: 8 });
+  assertEq(first, { employees: 2, tasks: 8, sessions: 8, projects: 3, comments: 3, activity: 32 });
   assert(/no employees/.test(throwsMsg(() => env.ctx.api_loadDemoSample())));
   assertEq(env.ctx.employees_list_().length, 2);
 });
@@ -417,6 +417,309 @@ test('sim: with no pin the container id is adopted once (the only property the a
   env.ctx.api_listEmployees();
   assertEq(env.props.get('SPREADSHEET_ID'), 'SIM-PINNED-ID');
   assertEq(env.log.propWrites, ['SPREADSHEET_ID']);
+});
+
+// --- projects, shared task pool, assignment, comments: through the public API ------------------
+
+function world() {
+  const env = createEnv();
+  const mk = (n, email) => env.ctx.api_createEmployee({ lastName: 'L' + n, firstName: 'Emp' + n, email: email || ('w' + n + '@example.com'), initialTask: 'Initial ' + n, sendInvite: false }).employee;
+  const a = mk('A'), b = mk('B');
+  const tok = {};
+  env.ctx.employees_list_().forEach(e => { tok[e.id] = e.workspaceToken; });
+  return { env, a, b, ta: tok[a.id], tb: tok[b.id], api: env.ctx };
+}
+const poolTask = (w, over) => w.api.api_createTask(Object.assign({ title: 'Pool task', mode: 'pool', priority: 'high', dueDate: '2999-01-01' }, over || {}));
+
+test('sim: manager creates a project and tasks in all three modes; statuses and pool visibility follow', () => {
+  const w = world();
+  const p = w.api.api_createProject({ name: 'Backend', description: 'API' });
+  const draft = w.api.api_createTask({ title: 'Draft', mode: 'draft', projectId: p.id });
+  const pool = w.api.api_createTask({ title: 'Pool', mode: 'pool', projectId: p.id, priority: 'high', dueDate: '2030-05-05', description: 'desc' });
+  const own = w.api.api_createTask({ title: 'Direct', mode: 'assign', employeeId: w.a.id, projectId: p.id });
+  assertEq([draft.displayStatus, pool.displayStatus, own.displayStatus], ['draft', 'available', 'assigned']);
+  assertEq([pool.projectName, pool.priority, pool.dueDate, own.employeeName.indexOf('LA') === 0], ['Backend', 'high', '2030-05-05', true]);
+  assertEq(w.api.api_listAvailableTasks(w.ta).map(t => t.title), ['Pool'], 'only published, unowned tasks are in the pool');
+  assertEq(w.api.api_listProjects()[0].taskCount, 3);
+  assertEq(w.api.api_listTasks().length, 2 + 3, 'two initial tasks plus three new ones');
+});
+
+test('sim: validation of project/task input is reported with translatable codes', () => {
+  const w = world();
+  assert(/@@required_projectName@@/.test(throwsMsg(() => w.api.api_createProject({ name: '  ' }))));
+  w.api.api_createProject({ name: 'P' });
+  assert(/@@duplicate_project@@/.test(throwsMsg(() => w.api.api_createProject({ name: 'p' }))));
+  assert(/@@invalid_mode@@/.test(throwsMsg(() => w.api.api_createTask({ title: 'x', mode: 'weird' }))));
+  assert(/@@invalid_priority@@/.test(throwsMsg(() => poolTask(w, { priority: 'urgent' }))));
+  assert(/@@date_invalid@@/.test(throwsMsg(() => poolTask(w, { dueDate: '2026-02-30' }))));
+  assert(/@@project_not_found@@/.test(throwsMsg(() => poolTask(w, { projectId: 'nope' }))));
+  assert(/@@employee_required@@/.test(throwsMsg(() => w.api.api_createTask({ title: 'x', mode: 'assign' }))));
+  assert(/@@employee_not_found@@/.test(throwsMsg(() => w.api.api_createTask({ title: 'x', mode: 'assign', employeeId: 'ghost' }))));
+  assert(/@@required_taskTitle@@/.test(throwsMsg(() => poolTask(w, { title: '' }))));
+  assert(/@@too_long@@\{"field":"description"/.test(throwsMsg(() => poolTask(w, { description: 'x'.repeat(2001) }))));
+});
+
+test('sim: publish / unpublish; only a draft can be published and only an unclaimed pool task taken back', () => {
+  const w = world();
+  const d = w.api.api_createTask({ title: 'D', mode: 'draft' });
+  assertEq(w.api.api_publishTask(d.id).displayStatus, 'available');
+  assert(/@@invalid_transition@@/.test(throwsMsg(() => w.api.api_publishTask(d.id))));
+  assertEq(w.api.api_unpublishTask(d.id).displayStatus, 'draft');
+  w.api.api_publishTask(d.id);
+  w.api.api_claimTask(w.ta, d.id);
+  assert(/@@invalid_transition@@/.test(throwsMsg(() => w.api.api_unpublishTask(d.id))), 'a claimed task cannot be taken back');
+  assert(/@@task_not_found@@/.test(throwsMsg(() => w.api.api_publishTask('nope'))));
+});
+
+test('sim: an employee claims a pool task; it persists server-side and nobody else can claim it', () => {
+  const w = world();
+  const t = poolTask(w);
+  const rows = w.api.tasks_list_().length;
+  const claimed = w.api.api_claimTask(w.ta, t.id);
+  assertEq([claimed.employeeId, claimed.displayStatus], [w.a.id, 'assigned']);
+  assert(/@@task_not_available@@/.test(throwsMsg(() => w.api.api_claimTask(w.tb, t.id))), 'second employee refused');
+  assert(/@@task_not_available@@/.test(throwsMsg(() => w.api.api_claimTask(w.ta, t.id))), 'owner cannot claim twice');
+  assertEq(w.api.tasks_findById_(t.id).employeeId, w.a.id, 'stored owner unchanged by the refused claims');
+  assertEq(w.api.tasks_list_().length, rows, 'no duplicate task');
+  assertEq(w.api.api_listAvailableTasks(w.tb).length, 0, 'gone from everybody\'s pool');
+  assert(w.api.api_getEmployeeState(w.ta).tasks.some(x => x.id === t.id), 'appears in My tasks');
+  assert(!w.api.api_getEmployeeState(w.tb).tasks.some(x => x.id === t.id), 'not in the other employee\'s tasks');
+});
+
+test('sim: the claiming employee comes from the token only: a forged employee id argument changes nothing', () => {
+  const w = world();
+  const t = poolTask(w);
+  w.api.api_claimTask(w.ta, t.id, w.b.id, { employeeId: w.b.id });
+  assertEq(w.api.tasks_findById_(t.id).employeeId, w.a.id);
+  assert(/@@invalid_link@@/.test(throwsMsg(() => w.api.api_claimTask(w.b.id, poolTask(w).id))), 'an employee id is not a token');
+  assert(/@@invalid_link@@/.test(throwsMsg(() => w.api.api_claimTask('', poolTask(w).id))));
+  assert(/@@task_not_found@@/.test(throwsMsg(() => w.api.api_claimTask(w.ta, 'no-such-task'))));
+});
+
+test('sim: assigning a pool task to a person removes it from the pool atomically and keeps one row', () => {
+  const w = world();
+  const t = poolTask(w, { title: 'Shared then assigned' });
+  const rows = w.api.tasks_list_().length;
+  const r = w.api.api_assignTaskToEmployee(t.id, w.b.id);
+  assertEq([r.employeeId, r.displayStatus, r.priority, r.dueDate], [w.b.id, 'assigned', 'high', '2999-01-01']);
+  assertEq(w.api.tasks_list_().length, rows, 'same row, no duplicate');
+  assertEq(w.api.api_listAvailableTasks(w.ta).length, 0, 'left the pool');
+  assert(w.api.api_getEmployeeState(w.tb).tasks.some(x => x.id === t.id), 'in the assignee\'s My tasks');
+  assert(/@@task_not_available@@/.test(throwsMsg(() => w.api.api_claimTask(w.ta, t.id))), 'others cannot claim an assigned task');
+  assert(/@@invalid_transition@@/.test(throwsMsg(() => w.api.api_assignTaskToEmployee(t.id, w.a.id))), 'cannot be re-assigned');
+  assert(/@@employee_not_found@@/.test(throwsMsg(() => w.api.api_assignTaskToEmployee(poolTask(w).id, 'ghost'))));
+  assert(/@@employee_not_found@@/.test(throwsMsg(() => w.api.api_assignTaskToEmployee(poolTask(w).id, w.tb))), 'a token is not an employee id');
+});
+
+test('sim: an employee cannot touch another employee\'s task by guessing its id', () => {
+  const w = world();
+  const bTask = w.api.api_createTask({ title: 'Secret B', mode: 'assign', employeeId: w.b.id });
+  const calls = [
+    () => w.api.api_startSession(w.ta, bTask.id), () => w.api.api_resumeSession(w.ta, bTask.id),
+    () => w.api.api_finishTask(w.ta, bTask.id), () => w.api.api_addComment(w.ta, bTask.id, 'hi')
+  ];
+  calls.forEach((fn, i) => assert(/@@task_not_yours@@/.test(throwsMsg(fn)), 'call ' + i));
+  assert(!JSON.stringify(w.api.api_getEmployeeState(w.ta)).includes('Secret B'), 'the task is invisible to A');
+  assert(!JSON.stringify(w.api.api_listMyComments(w.ta)).includes('Secret B'));
+  assertEq(w.api.sessions_forEmployee_(w.b.id).length, 0, 'nothing recorded for the owner');
+  assertEq(w.api.api_getEmployeeState(w.tb).tasks.find(x => x.id === bTask.id).displayStatus, 'assigned', 'still untouched');
+});
+
+test('sim: timer on a chosen task: one running timer, per-task time, pause/resume/finish, statuses', () => {
+  const w = world();
+  const t1 = w.api.api_createTask({ title: 'One', mode: 'assign', employeeId: w.a.id });
+  const t2 = w.api.api_createTask({ title: 'Two', mode: 'assign', employeeId: w.a.id });
+  const st = () => w.api.api_getEmployeeState(w.ta);
+  const ds = id => st().tasks.find(x => x.id === id).displayStatus;
+  w.api.api_startSession(w.ta, t1.id);
+  assertEq([ds(t1.id), ds(t2.id)], ['in_progress', 'assigned']);
+  assert(/@@session_running@@/.test(throwsMsg(() => w.api.api_startSession(w.ta, t2.id))), 'second timer refused');
+  assertEq(st().activeTask.id, t1.id, 'current task follows the running timer');
+  w.api.api_pauseSession(w.ta);
+  assertEq([ds(t1.id), ds(t2.id)], ['paused', 'assigned']);
+  w.api.api_startSession(w.ta, t2.id);
+  assertEq([ds(t1.id), ds(t2.id)], ['paused', 'in_progress']);
+  assert(/@@session_running@@/.test(throwsMsg(() => w.api.api_resumeSession(w.ta, t1.id))), 'cannot resume one task while another runs');
+  w.api.api_pauseSession(w.ta);
+  w.api.api_resumeSession(w.ta, t1.id);
+  assertEq([ds(t1.id), ds(t2.id)], ['in_progress', 'paused']);
+  assert(/@@no_session_to_pause@@/.test(throwsMsg(() => { w.api.api_pauseSession(w.ta); w.api.api_pauseSession(w.ta); })), 'pausing twice is refused');
+});
+
+test('sim: finishing one task leaves the running timer of another task alone', () => {
+  const w = world();
+  const t1 = w.api.api_createTask({ title: 'One', mode: 'assign', employeeId: w.a.id });
+  const t2 = w.api.api_createTask({ title: 'Two', mode: 'assign', employeeId: w.a.id });
+  w.api.api_startSession(w.ta, t1.id); w.api.api_pauseSession(w.ta);
+  w.api.api_startSession(w.ta, t2.id);
+  w.api.api_finishTask(w.ta, t1.id);
+  const s = w.api.api_getEmployeeState(w.ta);
+  assertEq([s.tasks.find(x => x.id === t1.id).displayStatus, s.tasks.find(x => x.id === t2.id).displayStatus], ['completed', 'in_progress']);
+  assertEq(s.activeSession.taskId, t2.id);
+  assert(/@@task_not_workable@@/.test(throwsMsg(() => w.api.api_startSession(w.ta, t1.id))), 'cannot work on a finished task');
+  assert(/@@task_not_workable@@/.test(throwsMsg(() => w.api.api_finishTask(w.ta, t1.id))), 'cannot finish twice');
+  assert(s.completedToday >= 1 && s.todayMs >= 0);
+});
+
+test('sim: tracked time stays on the right task and equals the sum of its sessions', () => {
+  const w = world();
+  const t1 = w.api.api_createTask({ title: 'One', mode: 'assign', employeeId: w.a.id });
+  const t2 = w.api.api_createTask({ title: 'Two', mode: 'assign', employeeId: w.a.id });
+  const put = (task, startMin, endMin) => w.api.appendRow_('WorkSessions', { id: w.api.uuid_(), employeeId: w.a.id, taskId: task.id, startTime: new Date(Date.now() - startMin * 60000).toISOString(), endTime: new Date(Date.now() - endMin * 60000).toISOString(), durationMs: (startMin - endMin) * 60000, status: 'paused' }, w.api.DEFAULT_CONFIG.HEADERS.SESSIONS);
+  put(t1, 50, 40); put(t1, 30, 20); put(t2, 15, 5);
+  const tasks = w.api.api_getEmployeeState(w.ta).tasks;
+  assertEq([tasks.find(x => x.id === t1.id).trackedMs, tasks.find(x => x.id === t2.id).trackedMs], [20 * 60000, 10 * 60000]);
+  assertEq(w.api.api_listEmployees().find(e => e.id === w.a.id).totalMs, 30 * 60000, 'employee total = sum of tasks');
+});
+
+test('sim: comments - employee and manager threads, ownership, history, safe text', () => {
+  const w = world();
+  const t = w.api.api_createTask({ title: 'Discuss', mode: 'assign', employeeId: w.a.id });
+  w.api.api_addComment(w.ta, t.id, '=SUM(1+1) <b>hi</b>');
+  w.api.api_addManagerComment(t.id, 'Looks good, continue.');
+  const mine = w.api.api_listMyComments(w.ta);
+  assertEq(mine.map(c => c.authorType), ['employee', 'manager']);
+  assertEq(mine[0].text, '=SUM(1+1) <b>hi</b>', 'text kept verbatim (rendered as text by the UI)');
+  assert(mine[0].authorName.indexOf('Emp') >= 0 && mine[1].authorName === '', 'author recorded for employees only');
+  const d = w.api.api_getTaskDetails(t.id);
+  assertEq(d.comments.map(c => c.authorType), ['employee', 'manager'], 'manager sees the whole thread');
+  assert(!JSON.stringify(d).includes(w.ta), 'no workspace token in task details');
+  assertEq(w.api.api_listMyComments(w.tb).length, 0, 'other employees see nothing');
+  assert(/@@task_not_yours@@/.test(throwsMsg(() => w.api.api_addComment(w.tb, t.id, 'intruder'))));
+  assert(/@@required_comment@@/.test(throwsMsg(() => w.api.api_addComment(w.ta, t.id, '   '))));
+  assert(/@@too_long@@\{"field":"comment"/.test(throwsMsg(() => w.api.api_addComment(w.ta, t.id, 'x'.repeat(1001)))));
+  assert(/@@task_not_found@@/.test(throwsMsg(() => w.api.api_addManagerComment('nope', 'x'))));
+  w.api.api_addComment(w.ta, t.id, 'second');
+  assertEq(w.api.api_getTaskDetails(t.id).comments.length, 3, 'history only grows');
+});
+
+test('sim: activity log records claim, assignment, timer and completion in order, without tokens', () => {
+  const w = world();
+  const t = poolTask(w);
+  w.api.api_claimTask(w.ta, t.id);
+  w.api.api_startSession(w.ta, t.id); w.api.api_pauseSession(w.ta); w.api.api_resumeSession(w.ta, t.id); w.api.api_finishTask(w.ta, t.id);
+  const acts = w.api.api_getTaskDetails(t.id).activity;
+  assertEq(acts.map(a => a.action), ['created', 'published', 'claimed', 'started', 'paused', 'resumed', 'completed']);
+  assert(acts[2].actorType === 'employee' && acts[2].actorName.indexOf('EmpA') >= 0 && acts[0].actorType === 'manager');
+  assert(!JSON.stringify(acts).includes(w.ta));
+  const t2 = poolTask(w, { title: 'Second' });
+  w.api.api_assignTaskToEmployee(t2.id, w.b.id);
+  w.api.api_updateTask(t2.id, { priority: 'low', dueDate: '' });
+  assertEq(w.api.api_getTaskDetails(t2.id).activity.map(a => a.action), ['created', 'published', 'assigned', 'updated']);
+  assert(w.api.api_getTaskDetails(t2.id).activity[2].detail.indexOf('EmpB') >= 0, 'assignment names the employee');
+});
+
+test('sim: priority and deadline can be changed until the task is finished; overdue is flagged', () => {
+  const w = world();
+  const t = poolTask(w, { dueDate: '2000-01-01' });
+  assertEq(t.overdue, true);
+  const u = w.api.api_updateTask(t.id, { priority: 'low', dueDate: '2999-12-31' });
+  assertEq([u.priority, u.dueDate, u.overdue], ['low', '2999-12-31', false]);
+  assert(/@@invalid_priority@@/.test(throwsMsg(() => w.api.api_updateTask(t.id, { priority: 'x' }))));
+  assert(/@@date_invalid@@/.test(throwsMsg(() => w.api.api_updateTask(t.id, { dueDate: '2026-13-01' }))));
+  w.api.api_assignTaskToEmployee(t.id, w.a.id);
+  w.api.api_finishTask(w.ta, t.id);
+  assert(/@@invalid_transition@@/.test(throwsMsg(() => w.api.api_updateTask(t.id, { priority: 'high' }))), 'finished tasks are frozen');
+  assertEq(w.api.api_listTasks().find(x => x.id === t.id).overdue, false);
+});
+
+test('sim: dashboard task counts, project time and workload reconcile with the underlying records', () => {
+  const w = world();
+  const p = w.api.api_createProject({ name: 'Proj' });
+  const t = w.api.api_createTask({ title: 'T', mode: 'assign', employeeId: w.a.id, projectId: p.id, dueDate: '2000-01-01' });
+  w.api.api_createTask({ title: 'Pool', mode: 'pool' }); w.api.api_createTask({ title: 'Draft', mode: 'draft' });
+  const put = (task, emp, a, b) => w.api.appendRow_('WorkSessions', { id: w.api.uuid_(), employeeId: emp, taskId: task, startTime: new Date(Date.now() - a * 60000).toISOString(), endTime: new Date(Date.now() - b * 60000).toISOString(), durationMs: (a - b) * 60000, status: 'paused' }, w.api.DEFAULT_CONFIG.HEADERS.SESSIONS);
+  put(t.id, w.a.id, 30, 20);
+  const today = new Date().toISOString().slice(0, 10);
+  const d = w.api.api_getDashboard(today, today);
+  const c = d.metrics.tasksByStatus, sum = Object.keys(c).reduce((a, k) => a + c[k], 0);
+  assertEq(sum, d.metrics.totalTasks);
+  assertEq(d.metrics.totalTasks, w.api.api_listTasks().length);
+  assertEq([c.draft, c.available, c.paused, c.assigned, d.metrics.overdueTasks], [1, 1, 1, 2, 1]);
+  assertEq(d.byProject.reduce((a, x) => a + x.ms, 0), d.metrics.trackedMs);
+  assertEq(d.byProject[0].name, 'Proj');
+  assertEq(d.workload.reduce((a, x) => a + x.ms, 0), d.metrics.trackedMs);
+  assertEq(d.metrics.trackedMs, 10 * 60000);
+  assertEq(w.api.api_listProjects()[0].trackedMs, 10 * 60000, 'project page shows the same time');
+});
+
+test('sim: responses of the new APIs contain no workspace token, spreadsheet id or other employees\' private data for an employee', () => {
+  const w = world();
+  const t = poolTask(w);
+  w.api.api_claimTask(w.ta, t.id);
+  const mgr = JSON.stringify([w.api.api_listTasks(), w.api.api_listProjects(), w.api.api_getTaskDetails(t.id), w.api.api_getDashboard('2026-01-01', '2026-01-31')]);
+  assert(!/[0-9a-f]{40}/.test(mgr) && !mgr.includes('SIM-PINNED-ID'));
+  const emp = JSON.stringify([w.api.api_getEmployeeState(w.ta), w.api.api_listAvailableTasks(w.ta), w.api.api_listMyComments(w.ta)]);
+  assert(!emp.includes(w.tb) && !emp.includes('SIM-PINNED-ID') && !emp.includes(w.b.email), 'nothing about the other employee');
+});
+
+test('sim: legacy sheets are migrated: an old Tasks sheet gains the new columns and its rows keep working', () => {
+  const env = createEnv();
+  const s = env.ss.insertSheet('Tasks');
+  s.getRange(1, 1, 1, 6).setValues([['id', 'employeeId', 'title', 'status', 'createdAt', 'completedAt']]);
+  s.getRange(2, 1, 1, 6).setValues([['old-1', 'e-old', 'Old task', 'active', '2026-01-01T00:00:00.000Z', '']]);
+  env.ctx.setupSheets_();
+  assertEq(s.getRange(1, 1, 1, 11).getValues()[0].join(','), env.ctx.DEFAULT_CONFIG.HEADERS.TASKS.join(','));
+  const t = env.ctx.tasks_findById_('old-1');
+  assertEq([t.title, t.priority, t.dueDate, t.projectId], ['Old task', 'medium', '', '']);
+  env.ctx.setupSheets_();
+  assertEq(s.getLastColumn(), 11, 'idempotent');
+});
+
+test('sim: reset and cleanup cover the new sheets; cleanup removes acceptance projects with their tasks only', () => {
+  const env = createEnv();
+  env.ctx.api_createProject({ name: 'Acceptance project 1730000000000' });
+  env.ctx.api_createProject({ name: 'Keep project' });
+  const proj = env.ctx.api_listProjects();
+  const junk = proj.find(p => /Acceptance/.test(p.name)), keep = proj.find(p => /Keep/.test(p.name));
+  const t1 = env.ctx.api_createTask({ title: 'junk task', mode: 'pool', projectId: junk.id });
+  const t2 = env.ctx.api_createTask({ title: 'keep task', mode: 'pool', projectId: keep.id });
+  env.ctx.api_addManagerComment(t1.id, 'junk comment'); env.ctx.api_addManagerComment(t2.id, 'keep comment');
+  env.arm('cleanupTestArtifacts');
+  const r = env.ctx.cleanupTestArtifacts();
+  assertEq([r.projects, r.tasks, r.comments > 0, r.activity > 0], [1, 1, true, true]);
+  assertEq(env.ctx.api_listTasks().map(t => t.title), ['keep task']);
+  assertEq(env.ctx.api_listProjects().map(p => p.name), ['Keep project']);
+  assertEq(env.ctx.api_getTaskDetails(t2.id).comments.length, 1, 'unrelated comments kept');
+  env.arm('resetDemoData');
+  env.ctx.resetDemoData();
+  assertEq(env.ctx.api_listProjects().length, 3);
+  assertEq(env.ctx.api_listTasks().length, 8);
+  assertEq(env.ctx.api_getDashboard('2026-10-01', '2026-10-02').metrics.totalTasks, 8);
+});
+
+test('sim: row caps also protect projects, comments and the activity log', () => {
+  const env = createEnv();
+  env.ctx.DEMO_CONFIG.LIMITS.PROJECTS = 2; env.ctx.DEMO_CONFIG.LIMITS.COMMENTS = 1;
+  env.ctx.api_createProject({ name: 'A' }); env.ctx.api_createProject({ name: 'B' });
+  assert(/@@demo_limit@@/.test(throwsMsg(() => env.ctx.api_createProject({ name: 'C' }))));
+  const t = env.ctx.api_createTask({ title: 'x', mode: 'pool' });
+  env.ctx.api_addManagerComment(t.id, 'one');
+  assert(/@@demo_limit@@/.test(throwsMsg(() => env.ctx.api_addManagerComment(t.id, 'two'))));
+  env.ctx.DEMO_CONFIG.LIMITS.ACTIVITY = 1;
+  env.ctx.api_createTask({ title: 'y', mode: 'pool' }); // activity cap reached: the task must still be created
+  assertEq(env.ctx.api_listTasks().length, 2);
+});
+
+test('sim: the sheet check is skipped for a short while after it succeeded, but never skips the access check', () => {
+  const env = createEnv();
+  env.ctx.api_listEmployees();
+  assert(Array.from(env.cacheStore.keys()).some(k => k.indexOf('wtt.setup.') === 0), 'a cache entry was written');
+  env.ss.deleteSheet(env.ss.getSheetByName('Invitations'));
+  env.ctx.api_listEmployees();
+  assertEq(env.ss.getSheetByName('Invitations'), null, 'within the cache window the sheets are not re-verified');
+  env.cacheStore.clear();
+  env.ctx.api_listEmployees();
+  assert(env.ss.getSheetByName('Invitations'), 'once the entry expires the sheet is created again');
+  const bad = createEnv({ title: 'Payroll 2026' });
+  bad.cacheStore.set('wtt.setup.1.x', '1');
+  assert(/unavailable/.test(throwsMsg(() => bad.ctx.api_listEmployees())), 'a non-demo workbook is refused regardless of the cache');
+});
+
+test('sim: the spreadsheet is opened once per execution however many sheets are read', () => {
+  const env = createEnv();
+  env.ctx.api_getDashboard('2026-01-01', '2026-01-02');
+  assert(env.log.opened.length <= 2, 'openById calls: ' + env.log.opened.length);
 });
 
 let passed = 0;

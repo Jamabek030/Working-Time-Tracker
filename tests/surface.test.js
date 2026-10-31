@@ -46,7 +46,10 @@ const API = [
   'api_listEmployees', 'api_createEmployee', 'api_loadDemoSample', 'api_getEmployeeDetails',
   'api_assignTask', 'api_rotateWorkspaceToken', 'api_generateReport', 'api_getEmployeeState',
   'api_startSession', 'api_pauseSession', 'api_resumeSession', 'api_finishTask',
-  'api_resendInvitation', 'api_getAppInfo', 'api_getDashboard', 'api_exportReportCsv'
+  'api_resendInvitation', 'api_getAppInfo', 'api_getDashboard', 'api_exportReportCsv',
+  'api_listProjects', 'api_createProject', 'api_listTasks', 'api_createTask', 'api_publishTask', 'api_unpublishTask',
+  'api_assignTaskToEmployee', 'api_updateTask', 'api_getTaskDetails', 'api_addManagerComment',
+  'api_listAvailableTasks', 'api_claimTask', 'api_listMyComments', 'api_addComment'
 ];
 const OWNER_ONLY = ['runTests', 'resetDemoData', 'cleanupTestArtifacts', 'enableOpenAccess', 'disableOpenAccess'];
 const PURE = Object.keys(fns).filter(n => (fns[n].file === 'pure.gs' || fns[n].file === 'i18n.gs') && !n.endsWith('_'));
@@ -221,6 +224,63 @@ test('config: demo build is enabled with finite row caps', () => {
   assert(/ENABLED:\s*true/.test(cfg), 'DEMO_CONFIG.ENABLED is true');
   ['EMPLOYEES', 'TASKS', 'SESSIONS', 'INVITES'].forEach(k => assert(new RegExp(k + ':\\s*[1-9]\\d*').test(cfg.slice(cfg.indexOf('LIMITS'))), 'cap for ' + k));
   assert(/DAILY_LIMIT:\s*[1-9]\d*/.test(cfg) && /PER_RECIPIENT_DAILY:\s*[1-9]\d*/.test(cfg), 'finite email caps');
+});
+
+const EMPLOYEE_API = ['api_getEmployeeState', 'api_listAvailableTasks', 'api_claimTask', 'api_startSession', 'api_pauseSession',
+  'api_resumeSession', 'api_finishTask', 'api_listMyComments', 'api_addComment'];
+
+test('access: every employee API resolves the employee from the token first and takes no employee id', () => {
+  EMPLOYEE_API.forEach(n => {
+    const b = fns[n].body;
+    const params = b.match(/^function\s+\w+\(([^)]*)\)/)[1].split(',').map(x => x.trim());
+    assertEq(params[0], 'token', n + ' first parameter');
+    assert(!params.some(p => /employee/i.test(p)), n + ' must not accept an employee id: ' + params.join());
+    assert(/employeeFromToken_\(token\)/.test(b), n + ' resolves the token');
+    assert(b.indexOf('employeeFromToken_(token)') < b.search(/tasks_|sessions_|comments_|projects_/), n + ' authenticates before touching data');
+  });
+});
+
+test('access: task ownership is decided by the stored row (tasks_requireOwned_) for every employee write on a task', () => {
+  assert(/tasks_requireOwned_\(/.test(fns.api_addComment.body), 'comments');
+  assert(/tasks_requireOwned_\(/.test(fns.sessions_start_.body) && /tasks_requireOwned_\(/.test(fns.sessions_finish_.body), 'timer');
+  assert(/employee\.id/.test(fns.tasks_claim_.body) && !/employeeId/.test(fns.api_claimTask.body), 'claim uses the resolved employee');
+  assert(/LockService\.getScriptLock\(\)/.test(fns.tasks_move_.body) && /tasks_findById_\(taskId, ctx\)/.test(fns.tasks_move_.body), 'task moves re-read the row inside the lock');
+  assert(fns.tasks_move_.body.indexOf('nextTaskStatus') > fns.tasks_move_.body.indexOf('tasks_findById_'), 'the transition is checked against the fresh row');
+  ['tasks_claim_', 'tasks_assign_', 'tasks_publish_', 'tasks_unpublish_'].forEach(n => assert(/tasks_move_\(/.test(fns[n].body), n + ' goes through tasks_move_'));
+  assert(fns.tasks_move_.body.indexOf('updates.status = next') > fns.tasks_move_.body.indexOf('buildUpdates'), 'status is written last');
+});
+
+test('access: pages call only the APIs that belong to them', () => {
+  const read2 = f => fs.readFileSync(path.join(srcDir, f), 'utf8');
+  const names = src => Array.from(new Set((src.match(/'(api_\w+)'/g) || []).map(x => x.slice(1, -1))));
+  const emp = names(read2('employee_js.html'));
+  const mgr = names(read2('manager_js.html'));
+  assert(emp.length >= 8 && mgr.length >= 20, 'found calls');
+  emp.forEach(n => assert(EMPLOYEE_API.indexOf(n) >= 0, 'employee page calls ' + n));
+  mgr.forEach(n => assert(API.indexOf(n) >= 0 && EMPLOYEE_API.indexOf(n) < 0, 'manager page calls ' + n));
+  assert(!/employeeId/.test(read2('employee_js.html')), 'employee page never handles an employee id');
+});
+
+test('access: the employee page template renders no manager markup or manager data', () => {
+  const html = fs.readFileSync(path.join(srcDir, 'employee.html'), 'utf8');
+  assert(!/manager_js|create-form|api_list(Employees|Tasks|Projects)|api_getDashboard/.test(html), 'no manager bits in employee.html');
+  assert(/workspaceTokenJs/.test(html), 'token comes from the server-resolved employee');
+  const doget = fns.doGet.body;
+  assert(/createTemplateFromFile\('employee'\)/.test(doget) && /employees_findByToken_\(token\)/.test(doget), 'the employee page is served only for a valid token');
+});
+
+test('layout: sidebar layout is responsive, keyboard-visible and has a mobile menu', () => {
+  const css = fs.readFileSync(path.join(srcDir, 'styles.html'), 'utf8');
+  ['@media (max-width: 960px)', '@media (max-width: 700px)', '@media (max-width: 1100px)', ':focus-visible', 'prefers-reduced-motion', '.sidebar', '.scrim', 'table.stack td::before'].forEach(k => assert(css.indexOf(k) >= 0, 'css has ' + k));
+  assert(/\.sidebar\s*\{[^}]*background:\s*var\(--nav-bg\)/.test(css), 'dark persistent sidebar');
+  ['manager.html', 'employee.html'].forEach(f => {
+    const html = fs.readFileSync(path.join(srcDir, f), 'utf8');
+    assert(/id="menu-btn"[^>]*aria-expanded="false"[^>]*aria-controls="sidebar"|id="menu-btn"[^>]*aria-controls="sidebar"[^>]*aria-expanded="false"/.test(html), f + ' menu button is accessible');
+    assert(/<meta name="viewport"/.test(html) && /<a class="skip"/.test(html), f + ' viewport + skip link');
+    assert(/<label for="lang-select"/.test(html), f + ' language select is labelled');
+    assert((html.match(/class="nav-item/g) || []).length >= 5, f + ' navigation items');
+    assert(!/<(div|span) class="nav-item/.test(html), f + ' navigation items are real buttons');
+  });
 });
 
 let passed = 0;

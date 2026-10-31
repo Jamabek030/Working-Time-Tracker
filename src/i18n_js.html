@@ -90,6 +90,12 @@
     return d.toLocaleDateString(locale(), { timeZone: 'UTC', day: '2-digit', month: '2-digit' });
   }
 
+  function fmtYmd(ymd) {
+    var d = new Date(ymd + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return String(ymd);
+    return d.toLocaleDateString(locale(), { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+
   function init(urlLang) {
     var chosen = window.WTT_RESOLVE_LANG({ stored: readStored(), param: urlLang, browser: (navigator.languages && navigator.languages[0]) || navigator.language });
     setLang(chosen, false);
@@ -99,7 +105,7 @@
 
   window.WTT = {
     t: t, apply: apply, setLang: setLang, init: init, errorText: errorText,
-    fmtMs: fmtMs, fmtDateTime: fmtDateTime, fmtDate: fmtDate, locale: locale,
+    fmtMs: fmtMs, fmtDateTime: fmtDateTime, fmtDate: fmtDate, fmtYmd: fmtYmd, locale: locale,
     lang: function () { return current; },
     onChange: function (fn) { listeners.push(fn); }
   };

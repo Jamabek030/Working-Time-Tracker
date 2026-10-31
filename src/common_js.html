@@ -1,0 +1,120 @@
+<script>
+// Helpers shared by the Manager and the employee workspace. All DOM is built with
+// textContent / setAttribute: user-controlled text (names, task titles, comments)
+// is never parsed as HTML.
+(function () {
+  'use strict';
+  var T = function (k, p) { return window.WTT.t(k, p); };
+
+  function h(tag, props, kids) {
+    var e = document.createElement(tag);
+    props = props || {};
+    Object.keys(props).forEach(function (k) {
+      var v = props[k];
+      if (v === undefined || v === null || v === false) return;
+      if (k === 'text') e.textContent = v;
+      else if (k === 'class') e.className = v;
+      else if (k === 'on') Object.keys(v).forEach(function (ev) { e.addEventListener(ev, v[ev]); });
+      else e.setAttribute(k, v === true ? '' : v);
+    });
+    (kids || []).forEach(function (c) {
+      if (c === null || c === undefined || c === false) return;
+      e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    });
+    return e;
+  }
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+  function setStatus(el, kind, text) { el.className = 'status' + (kind ? ' ' + kind : ''); el.textContent = text || ''; }
+
+  function call(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (err) { reject(new Error(window.WTT.errorText(err))); });
+      runner[fn].apply(runner, args);
+    });
+  }
+
+  function pill(kind, text) { return h('span', { class: 'pill ' + kind, text: text }); }
+  function taskStatusBadge(s) { return pill('ts-' + s, T('tstatus.' + s)); }
+  function priorityBadge(p) { return pill('pr-' + (p || 'medium'), T('priority.' + (p || 'medium'))); }
+  function workStateBadge(s) { return pill('st-' + s, T('state.' + s)); }
+  function sessionBadge(s) { return pill('ss-' + (s || 'none'), s ? T('status.' + s) : '—'); }
+  function dueNode(task) {
+    if (!task.dueDate) return h('span', { class: 'muted', text: '—' });
+    return h('span', { class: 'due' + (task.overdue ? ' overdue' : '') }, [
+      h('span', { text: window.WTT.fmtYmd(task.dueDate) }),
+      task.overdue ? pill('pr-overdue', T('task.overdue')) : null
+    ]);
+  }
+  function empty(text) { return h('div', { class: 'empty', text: text }); }
+  function initials(name) {
+    var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    return ((parts[0] || '?').charAt(0) + (parts[1] ? parts[1].charAt(0) : '')).toUpperCase();
+  }
+  function fullName(e) { return [e.lastName, e.firstName, e.middleName].filter(Boolean).join(' '); }
+  function td(label, content, cls) {
+    var cell = h('td', { 'data-label': label, class: cls });
+    if (content !== null && content !== undefined) cell.appendChild(typeof content === 'string' || typeof content === 'number' ? document.createTextNode(String(content)) : content);
+    return cell;
+  }
+  function th(key) { return h('th', { text: T(key) }); }
+  function table(headKeys, rows) {
+    return h('div', { class: 'table-wrap' }, [h('table', { class: 'stack' }, [
+      h('thead', {}, [h('tr', {}, headKeys.map(function (k) { return k ? th(k) : h('th', {}, [h('span', { class: 'sr-only', text: T('col.actions') })]); }))]),
+      h('tbody', {}, rows)
+    ])]);
+  }
+  function utcToday() { return new Date().toISOString().slice(0, 10); }
+  function utcDaysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
+  function debounce(fn, ms) { var t = null; return function () { var a = arguments; clearTimeout(t); t = setTimeout(function () { fn.apply(null, a); }, ms); }; }
+
+  // Sidebar navigation shared by both pages: views are <section class="view" id="view-NAME">.
+  function setupNav(onShow) {
+    var items = Array.prototype.slice.call(document.querySelectorAll('.nav-item'));
+    var sidebar = document.getElementById('sidebar');
+    var menuBtn = document.getElementById('menu-btn');
+    var scrim = document.getElementById('scrim');
+    function closeMenu() {
+      sidebar.classList.remove('open'); scrim.hidden = true;
+      menuBtn.setAttribute('aria-expanded', 'false');
+    }
+    menuBtn.addEventListener('click', function () {
+      var open = !sidebar.classList.contains('open');
+      sidebar.classList.toggle('open', open); scrim.hidden = !open;
+      menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    scrim.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeMenu(); });
+    function show(name) {
+      items.forEach(function (b) {
+        var on = b.getAttribute('data-view') === name;
+        b.classList.toggle('active', on);
+        if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.view'), function (v) { v.classList.toggle('active', v.id === 'view-' + name); });
+      var cur = items.filter(function (b) { return b.getAttribute('data-view') === name; })[0];
+      var title = document.getElementById('view-title');
+      if (cur && title) title.textContent = cur.querySelector('[data-i18n]').textContent;
+      closeMenu();
+      if (onShow) onShow(name);
+      window.scrollTo(0, 0);
+    }
+    items.forEach(function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-view')); }); });
+    window.WTT.onChange(function () {
+      var cur = items.filter(function (b) { return b.classList.contains('active'); })[0];
+      var title = document.getElementById('view-title');
+      if (cur && title) title.textContent = cur.querySelector('[data-i18n]').textContent;
+    });
+    return { show: show, current: function () { var c = items.filter(function (b) { return b.classList.contains('active'); })[0]; return c && c.getAttribute('data-view'); } };
+  }
+
+  window.WTTU = {
+    h: h, clear: clear, setStatus: setStatus, call: call, pill: pill, taskStatusBadge: taskStatusBadge,
+    priorityBadge: priorityBadge, workStateBadge: workStateBadge, sessionBadge: sessionBadge, dueNode: dueNode,
+    empty: empty, initials: initials, fullName: fullName, td: td, th: th, table: table,
+    utcToday: utcToday, utcDaysAgo: utcDaysAgo, debounce: debounce, setupNav: setupNav
+  };
+})();
+</script>

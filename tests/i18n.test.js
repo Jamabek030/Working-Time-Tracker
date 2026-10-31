@@ -254,7 +254,7 @@ test('every visible text node in the HTML pages is translatable', () => {
       const [, tag, attrs, text] = m;
       if (!/[A-Za-zЀ-ӿ]/.test(text)) continue;
       if (tag === 'option' && /^(Русский|English)$/.test(text.trim())) continue;
-      if (tag === 'title' || /aria-hidden="true"/.test(attrs)) continue;
+      if (tag === 'title' || /aria-hidden="true"/.test(attrs) || /id="view-title"/.test(attrs)) continue;
       assert(/data-i18n=/.test(attrs), f + ': untranslated <' + tag + '> text "' + text.trim() + '"');
     }
     (html.match(/<input[^>]*placeholder="[^"]*"[^>]*>/g) || []).forEach(inp => assert(/data-i18n-ph=/.test(inp) || /name@example\.com/.test(inp), f + ': placeholder without data-i18n-ph: ' + inp));

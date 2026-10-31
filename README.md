@@ -1,8 +1,8 @@
 # Working-Time Tracker
 
-A web application for tracking employees' working time, in Russian and English.
-Backend: Google Apps Script. Persistence: Google Sheets. Frontend: plain HTML,
-CSS and vanilla JavaScript served by `HtmlService`.
+A web application for tracking employees' working time and distributing tasks, in
+Russian and English. Backend: Google Apps Script. Persistence: Google Sheets.
+Frontend: plain HTML, CSS and vanilla JavaScript served by `HtmlService`.
 
 > **This repository ships a public demonstration build.** It is a demonstration
 > with fictional data, **not** a production employee-management system. Anyone
@@ -12,6 +12,7 @@ CSS and vanilla JavaScript served by `HtmlService`.
 ## Contents
 
 - [Features](#features)
+- [Tasks: shared pool, assignment, states](#tasks-shared-pool-assignment-states)
 - [Time-tracking rules enforced](#time-tracking-rules-enforced)
 - [Public demonstration](#public-demonstration) — URL, workflows, configuration, deployment
 - [Email invitations](#email-invitations)
@@ -30,74 +31,123 @@ CSS and vanilla JavaScript served by `HtmlService`.
 
 ## Features
 
-**Manager console** (the base URL; no sign-in; language selector in the header)
+Both interfaces use a persistent dark sidebar (icons, active state, profile and
+language selector) with a light content area, cards, tables and status badges;
+on tablets and phones the sidebar becomes a menu opened from the top bar. Focus
+outlines, ARIA state and a skip link are provided. The layout follows the
+supplied WorkTrack reference for structure and hierarchy only; no text or data
+was taken from it.
 
-- **Dashboard:** total employees, employees working now, on pause, active and
-  completed tasks, tracked time for the selected period, a per-day chart (with a
-  table equivalent) and tracked time per employee. All figures are computed from
-  the stored sessions with the same rules as the reports.
-- **Employees:** create an employee (last/first/middle name, email, initial task,
-  optional invitation email); search by name or email and filter by work status
-  (working / on pause / not started) without extra server requests; per-employee
-  *Details* with the copyable workspace link, invitation status with
-  *send / retry*, rotate link, assign a new task, and the full task history with
-  the sessions and time of every task.
-- **Reports:** date-range report per employee (optionally for one employee),
-  sessions in range, tasks created in range, clear empty state, and
-  **Export CSV** of exactly the selected report.
+**Manager console** (the base URL; no sign-in)
 
-**Employee workspace** (`<base URL>?page=employee&token=<token>`, opened from the
-employee's Details or from the invitation email): current task, **Start / Pause /
-Resume / Finish**, live elapsed time restored from the server after a refresh,
-full session history, language selector. It cannot open the Manager console.
+- **Overview:** employees, working now, on pause, open / completed / overdue
+  tasks, tracked time for the chosen period, a per-day chart, time by project,
+  tasks by status, employee workload, recent activity and recent comments.
+- **Projects:** create projects; see each project's tasks by status and tracked time.
+- **Tasks:** create a task as a *draft*, *publish it to the shared pool* or
+  *assign it to a person*; publish / take back a pool task; assign a pool or
+  draft task to a specific employee; change priority and deadline; search and
+  filter by project, status, priority, employee and deadline; per-task details
+  with sessions, the audit history and the comment thread with a reply box.
+- **Employees:** create an employee (optionally with an invitation email),
+  search/filter, details with the copyable workspace link, invitation status
+  with send/retry, link rotation and the person's tasks.
+- **Reports:** date-range report (optionally for one employee) and **CSV export**.
+- **Work history:** every session of a period, filterable by employee and project.
+- **Settings:** language, mail status, notes about the demonstration.
+
+**Employee workspace** (`<base URL>?page=employee&token=<token>`)
+
+- **Overview:** current task with timer and Start / Pause / Resume / Finish,
+  today's time, tasks, recent comments.
+- **My tasks:** every task the employee owns, with status, priority, deadline,
+  tracked time, per-task timer buttons and a shortcut to the comments.
+- **Available tasks:** the shared pool with search and project/priority filters
+  and a **Take task** button.
+- **Work history** and **Comments** (a thread per task shared with the Manager).
+
+## Tasks: shared pool, assignment, states
+
+A task row carries a project, priority (low / medium / high), an optional
+deadline (UTC date) and a description. Stored statuses and the only allowed
+moves (`TASK_TRANSITIONS` in `src/pure.gs`, enforced by `tasks_move_`):
+
+| From | Action | To | Who |
+| --- | --- | --- | --- |
+| draft | publish | available | Manager |
+| draft | assign | active | Manager |
+| available | unpublish | draft | Manager |
+| available | claim | active | the employee (identity from the token) |
+| available | assign | active | Manager |
+| active | complete | completed | the owner (Finish) |
+| completed, replaced | — | — | final |
+
+The *displayed* status of an owned task adds the work state computed from its
+sessions: **assigned** (nothing recorded), **in progress** (a timer runs),
+**paused** (latest session ended as paused), then **completed**.
+
+- **Claiming and assigning** run under the script lock and re-read the row inside
+  the lock, so two requests can never both succeed: the second employee gets
+  "This task is no longer available" from the server (not just a hidden button).
+- **Assigning a pool task** updates the same row (no copy), so it leaves the pool
+  and appears in the person's *My tasks* in one step; priority, deadline and any
+  recorded work are kept. An owned task cannot be re-assigned or claimed.
+- **Timers:** one running timer per employee; each task keeps its own time.
+  Finishing a task does not stop the timer of another task.
+- **Audit history:** created, published, unpublished, assigned, claimed, started,
+  paused, resumed, completed, updated and commented events are appended to the
+  `TaskActivity` sheet (best effort: a log problem never blocks the operation).
+- **Comments** are append-only, owned by the task's employee or the Manager, and
+  shown as plain text.
 
 ## Time-tracking rules enforced
 
 - Elapsed time comes from timestamps stored on the server, not a browser counter.
-- A pause closes the session with a frozen `durationMs`; resuming opens a new
-  session row, so every interval is auditable.
-- Pauses, overnight gaps and browser downtime are never counted (they are not
-  inside any session interval).
-- Starting while a session is running is rejected: never two active sessions per employee.
-- All critical writes run under `LockService.getScriptLock()`.
-- Employee creation is atomic (rolled back if the initial task cannot be saved);
-  a failed invitation never rolls the employee back.
-- Assigning a task closes a running session as `paused` against the old task,
-  marks that task `replaced` and opens a new one; history is never retargeted or deleted.
-- Dates are UTC calendar days everywhere (reports, dashboard, chart, CSV, and all
-  displayed timestamps carry `UTC`).
+- A pause closes the session with a frozen `durationMs`; resuming opens a new session row.
+- Pauses, overnight gaps and browser downtime are never counted (they are not inside a session interval).
+- Never two running timers for one employee; all critical writes run under `LockService.getScriptLock()`.
+- Employee creation is atomic; a failed invitation never rolls the employee back.
+- Dates are UTC calendar days everywhere (reports, dashboard, chart, CSV, task deadlines and every displayed timestamp, which carries `UTC`).
 
 ## Public demonstration
 
-> **Public Manager URL** (deployment `AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA`, currently **version 4**):
+> **Public Manager URL** (deployment `AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA`, currently **version 7**):
 >
 > https://script.google.com/macros/s/AKfycbzV_EGldUPBy51pOdbVu8Y99O42QVJnsmSKtoqx234oI4qHcuvefSj1FmzAlpqG-jyXWA/exec
 
-It opens the Manager with no Google sign-in. Google adds its own banner
-("created by another user, not by Google") to every Apps Script web app; the app
-cannot remove it. All reviewers share one dataset, so other reviewers' records
-will be visible and any record can be changed by anyone.
+It opens the Manager with no Google sign-in (Google adds its own "created by
+another user" banner; the app cannot remove it). All reviewers share one dataset.
 
-### Workflows
+### Employee access flow
 
-*Manager:* **Employees → Add employee** (fictional data) → the employee appears in
-the list → **Details** → copy or open the workspace link (works independently of
-email) → optionally **Send invitation** → assign tasks → watch **Dashboard** and
-**Reports** → **Export CSV**.
+1. Manager: **Employees → Add employee** (fictional data), or use an existing one.
+2. Manager: **Employees → Details** shows the **workspace link**: copy it or open it
+   (it works independently of email). *Send invitation* mails it to a real address.
+3. Employee: open the link → **Overview / My tasks / Available tasks / Work history / Comments**.
+4. Employee: **Available tasks → Take task** (or the Manager assigns one) → **My tasks → Start**.
 
-*Employee:* open the link → **Start** → **Pause** → **Resume** → **Finish task**.
-Refreshing the page keeps the running timer.
+### Suggested demo path
+
+*Manager:* Projects → create a project → Tasks → New task → "Publish to the shared
+pool" → Employees → Details → open the workspace link. *Employee:* Available tasks
+→ Take task → My tasks → Start / Pause / Finish → Comments. *Manager:* Tasks →
+Details of that task → activity history, comment thread, reply → Overview.
 
 ### Configuration of the demonstration
 
 | Aspect | Setting |
 | --- | --- |
 | Web app | One Apps Script web app, *Execute as: Me*, *Access: Anyone* (anonymous). |
-| Data | One dedicated Google Sheet (`Working Time Tracker — Test Env`): `Employees`, `Tasks`, `WorkSessions`, `Invitations`. |
-| Isolation | The sheet is pinned by the `SPREADSHEET_ID` Script Property (set by the owner, never by a client). The app **refuses to start** unless the sheet's title contains *test* or *demo*. |
+| Data | One dedicated Google Sheet (`Working Time Tracker — Test Env`): `Employees`, `Tasks`, `WorkSessions`, `Projects`, `TaskComments`, `TaskActivity`, `Invitations`. |
+| Isolation | The sheet is pinned by the `SPREADSHEET_ID` Script Property (owner-set, never client-set). The app **refuses to start** unless the sheet's title contains *test* or *demo*. |
 | Email | Invitations via `MailApp`, capped and logged — see [Email invitations](#email-invitations). |
-| Write caps | 100 employees, 500 tasks, 3000 sessions, 1000 invitation log rows. |
-| OAuth scopes | `spreadsheets`, `script.send_mail` (send-only), `script.scriptapp` (to learn the web-app URL). |
+| Write caps | 100 employees, 500 tasks, 3000 sessions, 50 projects, 1500 comments, 6000 activity rows, 1000 invitation rows. |
+| OAuth scopes | `spreadsheets`, `script.send_mail` (send-only), `script.scriptapp`. |
+
+An existing `Tasks` sheet from an earlier version is upgraded in place: the five
+new columns are appended to the right on the next request; rows are untouched.
+The sheet check is cached for 120 s and the spreadsheet handle is reused per
+request to keep responses fast.
 
 ### Redeploying / updating safely
 
@@ -111,165 +161,166 @@ SHEET_ID=<demo sheet id> node tests/live/accept.js <exec url>   # live acceptanc
 clasp undeploy <probe deployment id>         # remove the throw-away deployment
 ```
 
-Never point `.clasp.json` or `SPREADSHEET_ID` at another spreadsheet, and never
+Never point `.clasp.json` or `SPREADSHEET_ID` at another spreadsheet and never
 run `enableOpenAccess()` (the demo build does not use it).
-Version history: 1 initial demo · 2 ru/en, dashboard, CSV, invitations · 3 language kept in the URL · **4 responsive tables (current)**.
+Versions: 1 demo · 2 ru/en, dashboard, CSV, invitations · 3 language in the URL ·
+4 responsive tables · 5–6 sidebar UI, projects, shared task pool, comments · **7
+faster list refresh and fixes (current)**.
 
 ## Email invitations
 
 When a manager creates an employee with *Send an invitation email* ticked (or
 presses *Send / Retry invitation* in Details), the app sends **one plain-text
 email** to the entered address containing the employee's own workspace link, in
-the language selected by the manager (Russian or English). The employee record is
-saved first and is never rolled back by a delivery problem.
+the language selected by the manager. The employee record is saved first and is
+never rolled back by a delivery problem. This feature is unchanged by the task
+work; assigning or claiming tasks sends no email.
 
 What the Manager shows (each state is localized): *Accepted for delivery* ·
-*Failed* (retry available) · *Not authorized* (owner has not approved the mail
-permission) · *Skipped (example address)* · *Daily limit reached* · *Recipient
-limit reached* · *Disabled* · *Not requested*. "Accepted for delivery" means
-Google's mail service accepted the message; it is **not** a delivery receipt.
+*Failed* (retry available) · *Not authorized* · *Skipped (example address)* ·
+*Daily limit reached* · *Recipient limit reached* · *Disabled* · *Not requested*.
+"Accepted for delivery" means Google's mail service accepted the message; it is
+**not** a delivery receipt.
 
 Safeguards, because the web app runs as its owner and anyone can type any address:
 
-- Reserved/documentation addresses (`example.com/.org/.net` and subdomains, `.test`, `.invalid`, `.localhost`, `.example`) are never mailed. All sample data uses them.
+- Reserved/documentation addresses (`example.com/.org/.net` and subdomains, `.test`, `.invalid`, `.localhost`, `.example`) are never mailed. All sample data and all test data use them.
 - Global cap **20 invitations/day** and **2 per recipient/day** (`DEMO_CONFIG.EMAIL`), checked and reserved under the script lock before sending.
-- Fixed text; only the first name (≤ 60 chars) and the task title (≤ 120 chars) are user text, flattened to a single line (no header/line injection) and sent as plain text (no HTML).
-- Every attempt is logged in the `Invitations` sheet as a hashed recipient + status + sanitized error text — never the link or token.
-- Kill switch: Script Property `EMAIL_DISABLED=true` stops all sending immediately (or set `DEMO_CONFIG.EMAIL.ENABLED = false` and redeploy).
-- Only `MailApp` is used (send-only); no Gmail/Drive scope, no external email provider.
+- Fixed text; only the first name (≤ 60 chars) and the task title (≤ 120 chars) are user text, flattened to one line and sent as plain text.
+- Every attempt is logged in `Invitations` as a hashed recipient + status + sanitized error text — never the link or token.
+- **Kill switch:** Script Property `EMAIL_DISABLED=true` stops all sending immediately (or set `DEMO_CONFIG.EMAIL.ENABLED = false` and redeploy).
+- Only `MailApp` (send-only); no Gmail/Drive scope, no external provider.
 
-**Delivery has not been tested against a real mailbox.** The mail permission is
-approved for this deployment (the capability probe `MailApp.getRemainingDailyQuota()`
-returned a remaining quota of 100 from the deployed app, and the Manager shows
-"Invitation emails are available"), and the whole send path — link, language,
-caps, retry, failure handling — is covered by tests that replace the mail
-service with a recording double. No test sent a message to a real address,
-because no test address was authorized. To check real delivery, create an
-employee with **your own** address in the demo with the option ticked and look
-for the message (spam folder included).
+**Real delivery has not been tested.** The mail permission is approved for this
+deployment (the capability probe `MailApp.getRemainingDailyQuota()` returned 100
+and the Manager shows "Invitation emails are available"), and the send path —
+link, language, caps, retry, failure handling — is covered by tests that replace
+the mail service with a recording double. No test sent a message to a real
+address because none was authorized. To check delivery, create an employee with
+**your own** address in the demo with the option ticked and look for the message
+(spam folder included).
 
 ## Languages (Russian and English)
 
-A selector in the header of the Manager and of the employee workspace.
-Everything is translated: navigation, forms, buttons, tables, status badges,
-dashboard, reports, CSV headers and status names, success/validation/server
-messages, the confirm dialog, the invitation email and the date labels.
-Employee names, email addresses and task titles are user data and are never translated.
+A selector in the sidebar of both interfaces (and in Settings). Everything is
+translated: navigation, forms, buttons, tables, statuses and priorities, the
+dashboard, projects, tasks, comments, the activity history, reports, CSV headers
+and statuses, validation and server messages, the confirm dialogs, the
+invitation email and date labels. Employee names, emails, project names, task
+titles, descriptions and comments are user data and are never translated.
 
-- **Resolution order:** the user's saved choice → the `?lang=` of the opened link → the browser language → English.
-- **Persistence:** saved in the browser (`localStorage`) and mirrored in the page URL (`?lang=`), so it survives reloads even where storage is blocked.
-- **One implementation:** `src/i18n.gs` holds both dictionaries, the resolution rule, the server error-code table and the email/CSV texts; the pages receive them through the template. Server errors travel as `@@code@@{params}@@English` and are translated in the browser, so business logic is not duplicated per language.
-- **Coverage is tested:** same keys and placeholders in both languages, every key the HTML/JS uses exists, every server `UserError` has a translation, no hard-coded visible text, and the live run checks that no English interface text remains in Russian mode.
+- **Resolution order:** saved choice → `?lang=` of the opened link → browser language → English.
+- **Persistence:** `localStorage` plus the page URL (`?lang=`), so it survives reloads even if storage is blocked.
+- **One implementation:** `src/i18n.gs` holds both dictionaries (334 keys each), the resolution rule, the server error-code table and the email/CSV texts; pages receive them through the template. Server errors travel as `@@code@@{params}@@English` and are translated in the browser.
+- **Coverage is tested:** identical keys and placeholders, every key the HTML/JS uses exists, every server `UserError` has a translation, no hard-coded visible text, and the live run checks that no English interface text remains on any of the seven Manager views in Russian.
 
 ## Dashboard, analytics, CSV export, search
 
-- **Dashboard totals agree with the reports:** both use the same session-overlap rule (`overlapMs`); the per-day buckets partition the period exactly, so the daily values always sum to the report total (tested in Node, in the simulation, and live).
-- **Unfinished sessions** count up to "now" as in reports; paused/finished ones use their frozen duration; pauses and gaps are not counted. A zero-length session contributes nothing.
-- **Work status** per employee: *working* (a timer is running), *on pause* (the active task's latest closed session ended as paused), *not started* otherwise.
-- **CSV:** built on the server from the same report rows, filtered by the selected dates and employee; columns: employee, email, task, date, start, end (all **UTC**), duration `hh:mm:ss` and seconds, status (localized). UTF-8 with BOM and CRLF lines so Excel opens Cyrillic correctly; every text cell is quoted, and any cell whose first meaningful character is `= + - @ |` (also after whitespace/zero-width characters or a tab/CR) is prefixed with `'`. If the browser blocks the download, a text box with the CSV appears.
-- **Search/filter:** done in the browser on the already loaded list (name parts and email, case-insensitive, Cyrillic included; all words must match); no request is sent while typing.
-- Periods are limited to 366 days.
+- **Everything is computed from stored rows** and reconciles: task counts by status add up to the number of tasks; per-day buckets, per-employee, per-project and workload times all add up to the report total (tested in Node, in the simulation and live).
+- **Unfinished sessions** count up to "now" as in reports; pauses and gaps are not counted.
+- **Work status** per employee: *working* (a timer runs), *on pause* (the latest closed session of an active task ended as paused), *not started* otherwise.
+- **CSV:** built on the server from the same report rows, filtered by dates and employee; columns: employee, email, **project**, task, date, start, end (**UTC**), duration `hh:mm:ss` and seconds, status (localized). UTF-8 BOM and CRLF so Excel opens Cyrillic; every text cell quoted; any cell beginning (also after whitespace/zero-width/tab/CR) with `= + - @ |` is prefixed with `'`.
+- **Search/filter** of employees and tasks runs in the browser on the loaded lists; no request while typing. Periods are limited to 366 days.
 
 ## Security model
 
-The app has **no login by design**: the Manager URL is public and shared. The web
-app executes as its owner, so what an anonymous caller can do is exactly what the
-public code allows. The audit therefore covers every function an anonymous caller
-can reach. Key fact: `google.script.run` can call **every top-level function whose
-name does not end in `_`**.
-
-**Public surface (enforced by `tests/surface.test.js`):** `doGet`; 16 `api_*`
-functions (each wrapped in `safeApi_` and gated by `requireOpenAccess_`, none
-takes a sheet/spreadsheet/context argument); the side-effect-free helpers in
-`pure.gs`/`i18n.gs` (no service calls); and five owner-only functions
+The app has **no login by design**: the Manager URL is public and shared. It
+executes as its owner, so what an anonymous caller can do is exactly what the
+public code allows. `google.script.run` can call **every top-level function whose
+name does not end in `_`**, so the surface is pinned by `tests/surface.test.js`:
+`doGet`; 30 `api_*` functions (each wrapped in `safeApi_` and gated by
+`requireOpenAccess_`; none takes a sheet, spreadsheet or context argument);
+side-effect-free helpers in `pure.gs`/`i18n.gs`; and five owner-only functions
 (`runTests`, `resetDemoData`, `cleanupTestArtifacts`, `enableOpenAccess`,
-`disableOpenAccess`) that refuse unless the owner has armed **that function** by
-adding Script Property `ADMIN_MODE=<function name>`; the check-and-consume is
-atomic under the script lock and happens before the operation starts.
-The other 120 functions end in `_` and are not exposed to the client (verified
-live by calling 21 of them from the deployed page: none is callable).
+`disableOpenAccess`) that refuse unless the owner armed **that function** with
+Script Property `ADMIN_MODE=<function name>` (checked and consumed atomically under
+the lock before the operation runs). All other functions end in `_` and are not
+exposed (verified live by calling 22 of them from the deployed page).
 
 | ID | Finding | Resolution |
 | --- | --- | --- |
-| F-19 | Every non-underscore function callable by anonymous visitors; the old access gate was bypassable | Internals renamed with a trailing `_`; public surface pinned by a test |
-| F-20 | Anonymous visitors could make the owner mail arbitrary addresses | Email now sits behind reserved-domain skip, daily/recipient caps, kill switch, plain-text fixed template, send-only scope (see above) |
-| F-21 | Public admin functions (`runTests`, `enableOpenAccess`, …; `setSpreadsheetId` removed) | `adminOnly_` with function-bound, lock-protected, consume-before-run arming |
-| F-22 | Anonymous growth of the spreadsheet | Row caps on all four app sheets |
-| F-23 | Owner scope `spreadsheets` is broader than one workbook | Mitigated: one pinned id, never client-supplied, title check fails closed, no function returns the id (checked live) |
-| F-24 | Validation errors shown as "server error" | `UserError` + translated codes |
-| F-25 | `doGet` touched the sheet before the access check and echoed setup errors | Access first; fixed message |
-| F-26 | Client built HTML from data (escaped, but a sink) | All DOM is built with `textContent`; a test bans `innerHTML`/`insertAdjacentHTML`/`eval` in client code; live check: a name containing `<img onerror>` is shown as text and never runs |
-| F-27 | CSV export is a formula-injection vector | `csvCell` neutralisation incl. whitespace/zero-width/tab/CR variants; live check on the downloaded file |
-| F-28 | Invitation log could hold secrets | Only hashed recipient, status and a sanitized, link/token-stripped error text are stored; tests assert the token never appears |
+| F-19…F-25 | Public-surface exposure, admin functions, doGet ordering | Private `_` functions, function-bound arming, access check first (earlier work) |
+| F-20, F-28 | Anonymous visitors could make the owner mail arbitrary addresses; log secrets | Caps, reserved-domain skip, kill switch, send-only scope, hashed log (see Email) |
+| F-26, F-27 | HTML sinks in the client; CSV formula injection | All DOM via `textContent` (test bans `innerHTML` etc.); `csvCell` neutralisation, checked on the downloaded file |
+| F-29 | **Task ownership**: an employee could try to start, finish, comment on or claim another employee's task by guessing ids | Every employee API takes only the token and resolves the employee on the server (test: no employee-id parameter, authenticate before data access); ownership is decided by the stored row (`tasks_requireOwned_`); verified live with foreign task ids → `task_not_yours` |
+| F-30 | **Claim races**: two employees taking the same pool task | `tasks_move_` re-reads the row inside the script lock and checks `TASK_TRANSITIONS`; status written last; second claim refused server-side (live, with a stale card in the second workspace) |
+| F-31 | Manager ids and employee tokens being interchangeable | Employee APIs refuse an employee id as a token; manager APIs refuse a token as an id (live) |
+| F-32 | New responses leaking tokens or the spreadsheet id | Tests scan manager and employee responses for 40-hex tokens, the spreadsheet id and the other employee's data |
+| F-33 | Unbounded growth through the new sheets | Row caps on projects, comments and the activity log |
 
-**Manager vs employee boundary.** An employee link carries a 40-hex (160-bit)
-random token that identifies **one workspace**. Possession of the link grants that
-workspace — it is not proof of who the person is, and it can be rotated. The
-workspace page renders no Manager UI, employee APIs accept only a token (an
-employee id is refused), and manager APIs take employee ids (a token is refused);
-both verified live. **However, because the demo's Manager APIs are
-unauthenticated, any anonymous visitor — including someone holding an employee
-link — can call them directly.** The workspace does not *grant* Manager access,
-but nothing in this demo *prevents* it. A real deployment must add authentication.
+**Manager vs employee boundary.** A workspace link carries a 40-hex (160-bit)
+random token identifying **one workspace**. Possession grants that workspace; it
+is not proof of who the person is, and it can be rotated. The workspace page
+renders no Manager UI and employee APIs act only on that employee's records.
+**However, the demo's Manager APIs are unauthenticated: any anonymous visitor —
+including someone holding an employee link — can call them directly.** The
+workspace does not *grant* Manager access, but nothing in this demo *prevents*
+it. A real deployment needs authentication.
 
-Shared-data risks (all accepted for a demo): anyone can read or change every
-record, including every workspace link; anonymous traffic consumes the owner's
-Apps Script and mail quotas; the app runs with the owner's permissions.
+Shared-data risks (accepted for a demo): anyone can read or change every record,
+including every workspace link; anonymous traffic consumes the owner's Apps
+Script and mail quotas; the app runs with the owner's permissions.
 
 ## Demo data: reset and cleanup
 
-Both are owner-only (function-bound `ADMIN_MODE`, see above), act only on the
-pinned demo spreadsheet, refuse if its title does not contain *test*/*demo*, and
-are never exposed to visitors. There is no automatic reset (it would wipe
-reviewers' data).
+Both are owner-only (function-bound `ADMIN_MODE`), act only on the pinned demo
+spreadsheet, refuse unless its title contains *test*/*demo*, and are never
+exposed to visitors. There is no automatic reset.
 
-- **`resetDemoData`** — clears and re-seeds exactly `Employees`, `Tasks`, `WorkSessions`, `Invitations` with two fictional employees (`@example.com`). *Destructive for all demo data.*
-- **`cleanupTestArtifacts`** — removes **only** the fictional records created by this project's own acceptance runs: emails matching `demo.verifier.<digits>@example.com` or exactly `inj.verifier@example.com`, plus their tasks, sessions and invitation rows. Every other employee is untouched (tested, including near-miss addresses).
+- **`resetDemoData`** — clears and re-seeds `Employees`, `Tasks`, `WorkSessions`, `Invitations`, `Projects`, `TaskComments`, `TaskActivity` with 3 projects, 2 employees, 8 tasks (a completed one, a replaced one, two in the employees' hands, three in the shared pool, one draft; one overdue), 8 sessions, comments and an activity history. *Destructive for all demo data.*
+- **`cleanupTestArtifacts`** — removes **only** this project's own acceptance records: employees with email `demo.verifier.<digits>@example.com` or exactly `inj.verifier@example.com`, and projects named `Acceptance project <digits>`, together with their tasks, sessions, comments, activity and invitation rows. Everything else is untouched (tested, including near-miss names).
 
 To run one: Project Settings → Script properties → add `ADMIN_MODE` = the function's
-name → select the function in the editor → Run → read the log.
+name → select it in the editor → Run → read the log.
 
 **Origin of the repeated `Verifier Demo Q` records and the formula-looking
-`=HYPERLINK(...)` record:** they were created by `tests/live/accept.js` and its
-predecessor, the project's own live acceptance runs against the deployed demo (one
-`Verifier Demo Q` employee per run; `inj.verifier@example.com` was the
-formula-injection check). Both are displayed as plain text; nothing is executed.
-They have **not** been removed because removal requires the owner to arm
-`cleanupTestArtifacts`. The record *Иванов Иван Иванович* is **not** from these
-tests (it was entered by someone using the public demo) and was left untouched.
+`=HYPERLINK(...)` / `@cmd` records:** they come from this project's own live
+acceptance runs (`tests/live/accept.js` and its predecessors), which create one
+fictional employee (and, now, one project with its tasks) per run. They are shown
+as plain text and nothing executes. The newest runs' records follow the cleanup
+patterns above; the *older* `Verifier Demo Q` rows use the same email pattern. They
+have **not** been removed because removal needs the owner to arm
+`cleanupTestArtifacts`. The record *Иванов Иван Иванович* was **not** created by the
+tests (someone entered it in the public demo) and was left untouched.
 
 ## Architecture and data flow
 
 ```
-Browser (manager.html / employee.html + i18n_js.html)
+Browser (manager.html / employee.html + i18n_js.html + common_js.html)
   |  google.script.run.<api_*>(args)           (only api_* is callable; see Security model)
   v
 Code.gs  (doGet, api_*, safeApi_ -> coded errors, access gate)
   |
   v
-Employees_ / Tasks_ / Sessions_ / Reports_ / Analytics.gs (dashboard, CSV) / Email.gs / Demo.gs
+Employees_ / Tasks (claim/assign/move) / Sessions_ / Reports_ / Projects (projects, comments, activity)
+Analytics (dashboard, CSV) / Email / Demo
   |  read/write via
   v
 Repository.gs  (generic row CRUD + cellSafe formula escaping + demo row caps)
   v
-Google Sheets: Employees / Tasks / WorkSessions / Invitations
+Google Sheets
 ```
 
-Pure helpers (`pure.gs`, `i18n.gs`) contain the testable logic: `overlapMs`,
-`sumSessionMs`, `classifyWorkState`, `dailyBreakdown`, `buildReportCsv`/`csvCell`,
-`filterEmployees`, `isReservedTestEmail`, `sanitizeMailText`, `resolveLanguage`,
-`errorCodeFor`, `buildInvitationEmail`, … They run in Node unchanged.
+Pure helpers (`pure.gs`, `i18n.gs`) hold the testable logic: `overlapMs`,
+`sumSessionMs`, `classifyWorkState`, `deriveTaskStatus`, `nextTaskStatus`,
+`isOverdue`, `dailyBreakdown`, `buildReportCsv`/`csvCell`, `filterEmployees`,
+`filterTasks`, `isReservedTestEmail`, `resolveLanguage`, `errorCodeFor`, … They run
+in Node unchanged.
 
 **Data model.** `Employees`: `id | lastName | firstName | middleName | email |
 workspaceToken | createdAt | active`. `Tasks`: `id | employeeId | title | status |
-createdAt | completedAt` (`active | completed | replaced`). `WorkSessions`: `id |
-employeeId | taskId | startTime | endTime | durationMs | status` (`active | paused |
-completed`). `Invitations`: `id | employeeId | emailHash | at | status | detail`.
+createdAt | completedAt | projectId | priority | dueDate | description |
+assignedAt`. `WorkSessions`: `id | employeeId | taskId | startTime | endTime |
+durationMs | status`. `Projects`: `id | name | description | status | createdAt`.
+`TaskComments`: `id | taskId | authorType | authorId | authorName | text |
+createdAt`. `TaskActivity`: `id | taskId | at | actorType | actorId | action |
+detail`. `Invitations`: `id | employeeId | emailHash | at | status | detail`.
 
-**Input handling.** Strings written to cells go through `cellSafe`; length limits
-(names 100, email 320, task 500) are enforced server-side; dates must be strict
-`YYYY-MM-DD`; validation failures are `UserError`s shown in the user's language;
-any other error becomes a generic message and is logged server-side only.
+**Input handling.** Strings written to cells go through `cellSafe`; limits
+(names 100, email 320, task 500, description 2000, comment 1000, project 100) are
+server-side; dates must be strict `YYYY-MM-DD`; validation failures are
+`UserError`s shown in the user's language; other errors become a generic message
+and are logged server-side only.
 
 ## Prerequisites and local setup
 
@@ -282,30 +333,31 @@ SHEET_ID=<id of your test spreadsheet> bash ./scripts/setup-apps-script.sh
 ```
 
 It creates (first run) or refreshes the container-bound project and pushes
-`src/*.gs`, `src/*.html` and the manifest (staged **after** `clasp create`, which
-would otherwise overwrite it). It never deploys and never calls `enableOpenAccess()`.
-For a standalone project add Script Property `SPREADSHEET_ID` in Project Settings.
+`src/*.gs`, `src/*.html` and the manifest (staged **after** `clasp create`). It
+never deploys and never calls `enableOpenAccess()`. For a standalone project add
+Script Property `SPREADSHEET_ID` in Project Settings.
 
 ## Running the tests
 
 ```bash
-npm test                      # runs the five Node suites below
-node tests/pure.test.js       # also individually: analytics, i18n, surface, gas-sim
+npm test                      # runs the six Node suites below
+node tests/pure.test.js       # also individually: analytics, tasks, i18n, surface, gas-sim
 ```
 
 | Suite | What it covers |
 | --- | --- |
-| `tests/pure.test.js` | overlap maths, duration summing, state transitions, validation, strict dates, `cellSafe`, `UserError`, demo helpers |
-| `tests/analytics.test.js` | work-state classification, daily breakdown (partition property), CSV escaping and formula neutralisation, invitation helpers, employee search/filter |
-| `tests/i18n.test.js` | dictionary parity/coverage, language precedence and persistence (the real client runtime runs in a vm with a DOM stub), error codes, invitation/CSV texts, no hard-coded visible text |
-| `tests/surface.test.js` | static guards: public function allowlist, `api_*` gating, admin guards, mail confined to `Email.gs` behind its safeguards, no HTML sinks in client code, manifest scopes |
-| `tests/gas-sim.test.js` | runs the **real** `src/*.gs` (including every `runTests` test) against an in-memory **simulation** of Sheets/Properties/Lock/MailApp: invitations (success, failure, retry, no permission, limits, kill switch, injection), dashboard vs report, CSV, cleanup, access boundaries |
+| `tests/pure.test.js` | overlap maths, duration summing, validation, strict dates, `cellSafe`, `UserError`, demo helpers |
+| `tests/analytics.test.js` | work-state classification, daily breakdown, CSV escaping and formula neutralisation, invitation helpers, employee search/filter |
+| `tests/tasks.test.js` | the transition table (every move, no invalid one, two claims → exactly one wins), displayed status, overdue, priorities, task filters, sample-data integrity |
+| `tests/i18n.test.js` | dictionary parity/coverage, language precedence and persistence (the real client runtime in a vm with a DOM stub), error codes, no hard-coded visible text |
+| `tests/surface.test.js` | public-function allowlist, `api_*` gating, admin guards, **employee APIs take only a token and authenticate first**, task moves re-read the row under the lock, pages call only their own APIs, no HTML sinks in client code, responsive/ARIA structure, manifest scopes |
+| `tests/gas-sim.test.js` | runs the **real** `src/*.gs` (including all 51 `runTests` tests) against an in-memory **simulation** of Sheets/Properties/Lock/Cache/MailApp: pool lifecycle, claim races, assignment, foreign-id attacks, timers across tasks, comments, activity log, dashboard reconciliation, CSV, legacy-sheet migration, cleanup, caps, invitations |
 | `tests/live/accept.js` | end-to-end run against a deployed URL in a fresh signed-out Chrome (not part of `npm test`) |
 
-**Apps Script integration suite** (`runTests`, 38 tests, writes only to `Test_*`
-sheets; the mail service is replaced by a test double, so it never sends mail):
-Project Settings → Script properties → `ADMIN_MODE` = `runTests` → run `runTests`
-→ View → Logs (expect `38/38 passed`).
+**Apps Script integration suite** (`runTests`, 51 tests, writes only to `Test_*`
+sheets; the mail service is replaced by a test double): Project Settings → Script
+properties → `ADMIN_MODE` = `runTests` → run `runTests` → View → Logs (expect
+`51/51 passed`).
 
 ### Test results (actual, by environment)
 
@@ -313,85 +365,94 @@ Project Settings → Script properties → `ADMIN_MODE` = `runTests` → run `ru
 | --- | --- | --- |
 | Local Node | `pure.test.js` | **55/55** |
 | Local Node | `analytics.test.js` | **26/26** |
+| Local Node | `tasks.test.js` | **21/21** |
 | Local Node | `i18n.test.js` | **26/26** |
-| Local Node | `surface.test.js` | **20/20** |
-| Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (its simulated `runTests` ran all 38 integration tests) | **35/35** |
+| Local Node | `surface.test.js` | **25/25** |
+| Local Node, in-memory **simulation** (not Apps Script) | `gas-sim.test.js` (its simulated `runTests` ran all 51 integration tests) | **55/55** |
 | Real Apps Script editor | `runTests`, earlier 28-test suite | **28/28** — reported by the project owner before this change set |
-| Real Apps Script editor | `runTests`, current 38-test suite | **Not run.** It needs the owner to arm `ADMIN_MODE=runTests`; the simulation is not a substitute |
-| Deployed app (v4), signed-out headless Chrome | `tests/live/accept.js` | **64/64** on the final run (details below) |
+| Real Apps Script editor | `runTests`, current 51-test suite | **Not run.** It needs the owner to arm `ADMIN_MODE=runTests` in a signed-in editor, which the automation cannot do; the simulation is not a substitute |
+| Deployed app (v7), signed-out headless Chrome | `tests/live/accept.js` | **102/102** on the final run against the public URL |
+
+Total local Node checks: **208** (55 + 26 + 21 + 26 + 25 + 55).
 
 ## Live verification of the deployed URL
 
 `tests/live/accept.js` drives a fresh, signed-out Chrome profile over the
-DevTools protocol against the public URL (final run on the updated public
-deployment, version 4): **64/64 checks passed**. Earlier runs against a
-throw-away deployment of the same code failed only on mistakes in the script
-itself (e.g. a `<textarea>` normalising CRLF, targeting the wrong workspace frame)
-and one real defect (below); no result was edited to pass.
+DevTools protocol against the public URL (final run on the public deployment,
+version 7): **102/102 checks passed**. Earlier runs against a throw-away
+deployment failed only on mistakes in the script itself (reading a list before
+the server answered, an animation measured too early, a truncated string
+compared, a wrong expectation of which task is "current", an activity pattern
+that ignored interleaved comments) — no result was edited to pass; the app issues that the screenshots and
+timings exposed are listed under *Defects found and fixed*.
 
 | Area | What was executed |
 | --- | --- |
-| Access | Manager opens with no sign-in; demo banner; first visit follows the browser language |
-| Languages | Switch to Russian: header, navigation and forms translated; no English interface text on any of the three tabs; switch back; the choice survives a reload; the workspace takes the link's language and switches too |
-| Employees | Create (invitation skipped for the example address, in Russian); duplicate email refused in Russian and in English; over-long name message; hostile name (`<img onerror>`, `=SUM(…)`) shown as text and never executed |
-| Search/filter | Case-insensitive email search, multi-word search, empty result message, status filter, **no extra network request** while typing |
-| Details/invitations | Copyable workspace link; invitation state and retry button; retry for a reserved address reports exactly that; second task assigned, first kept as `replaced` |
-| Employee workspace | Opens anonymously; no Manager UI; Start → time increases → refresh keeps it → Pause freezes it → Resume adds a new session row → duplicate start refused → Finish (confirm dialog) |
-| Dashboard | "Working now" rose 0 → 1 while the timer ran; "On pause" after pausing; total equals the report total; daily buckets and per-employee rows sum to it; chart has one column per day; empty and invalid periods show clear messages |
-| Reports/CSV | Report totals; employee filter; CSV has BOM, Russian headers, one line per session, formula-looking name and task neutralised; the downloaded file equals the server's CSV; filtered CSV only contains that employee; empty range gives a clear message |
-| Layout | No horizontal overflow on desktop (1280), tablet (768) and mobile (390) on all tabs; tab list has ARIA roles/selection; language selector is labelled |
-| Security | 21 internal functions not callable from the client; the five owner-only functions refuse anonymous calls ("not armed"); spreadsheet id appears in no page/frame/API response; no workspace token in list/report/dashboard/app-info; employee id refused as token and token refused as employee id; no stack traces or file names in errors |
+| Access, layout | Manager opens with no sign-in; dark persistent sidebar with seven sections and a profile/language block; demo banner |
+| Languages | Russian: brand, all seven navigation labels, no English interface text on any of the seven views; switch back; the choice survives a reload |
+| Employees | Create two (invitation skipped for example addresses, in the selected language); duplicate refused; search without a network request; empty result message; link, retry |
+| Projects, tasks | Create a project (duplicate refused); create tasks as pool / draft / direct assignment; statuses, priorities, the overdue flag and indicator in the table; hostile title shown as text and never executes; filters by project, status, priority, employee, deadline and text search; empty result |
+| Shared pool | Employee sees the published tasks (not drafts or assigned ones); search, project and priority filters; **Take task**; the task leaves the pool; appears in *My tasks*; a **second employee with a stale card is refused by the server** and via the API (`task_not_available`); the stored owner is unchanged |
+| Assignment | Manager assigns a pool task to employee B: same row, details kept, no duplicate, gone from A's pool, in B's *My tasks*; A cannot claim it, nor start, finish or comment on it with its id |
+| Timer | Start on the claimed task; badge "In progress"; another task's Start is disabled and the server also refuses; the dashboard counts "working now"; a refresh restores the timer; Pause freezes it, dashboard "on pause"; Resume continues; history shows both sessions; Finish (confirm) completes |
+| Comments | Employee comments (markup/formula text kept as text); Manager sees author and text and replies; employee sees the reply; a third party can neither read nor write that thread |
+| Activity | The task's history is `created, published, claimed, started, paused, resumed, paused, completed` plus both comments, with no workspace token |
+| Dashboard | Task counts by status equal the task rows and the displayed statuses; tracked time = report total = daily = per-employee = per-project = workload; the project's time is attributed; overdue count; cards show exactly these numbers; chart/donut/status bars/workload/feeds drawn; empty period message |
+| Reports, history, CSV | Report totals with projects; CSV (BOM, Russian headers incl. project, one line per session, no raw formula cell) downloaded and equal to the server's text; Work history lists every session; Settings page |
+| Responsive | No horizontal overflow on any of the 7 Manager and 5 employee views at 1366, 820 and 390 px; on mobile the sidebar is hidden behind an accessible menu button that opens and closes it; nav items are buttons with `aria-current`; labelled language selector; skip link; focus-visible rule |
+| Security | 22 internal functions (task moves, comments, cleanup, spreadsheet access, …) not callable; the five owner-only functions refuse (`not armed`); the spreadsheet id appears in no page/frame/API response; no workspace token in any manager or employee response; id/token not interchangeable; no stack traces; **no JavaScript error on any page** |
 
-**Not verified:** a real email delivery (see above); behaviour in Safari/Firefox or
-on a physical phone; visual layout beyond the three emulated widths and the
-screenshots reviewed; behaviour under concurrent anonymous load or quota
-exhaustion; a raw HTTP client calling private functions without the page's
-`google.script.run` (relies on Google's documented rule for names ending in `_`);
-keyboard-only use beyond the ARIA/tab checks.
+**Not verified:** a real email delivery; Safari/Firefox or a physical phone; visual
+fidelity beyond the three emulated widths and the screenshots reviewed;
+concurrent anonymous load or quota exhaustion; a true *simultaneous* double-claim
+(the live test uses a stale second client, the lock behaviour under real
+parallel executions is by design of `LockService`, not measured); a raw HTTP
+client calling private functions without the page's `google.script.run`; keyboard-only
+use beyond the ARIA/focus checks.
 
 ## Known limitations
 
 - **No authentication; shared data.** Anyone with the URL can read and change everything, including every workspace link, and can call the Manager APIs directly (also with an employee link in hand).
-- **Runs as the owner.** Scopes `spreadsheets`, `script.send_mail`, `script.scriptapp`; a future code defect would run with them. Use a dedicated Google account for a public demo.
-- **Mail is a spam-relay risk by nature.** Anonymous visitors choose the recipient. Caps (20/day, 2 per recipient) and the kill switch bound it, but up to 20 mails a day can still go from the owner's account to addresses chosen by strangers. Disable email (`EMAIL_DISABLED=true`) if that is unacceptable.
-- **Quotas.** Anonymous traffic and mail consume the owner's Apps Script/Gmail quotas.
-- **Arming window.** Between adding `ADMIN_MODE=<function>` and running it, a visitor could call that same function first (only that one, only on demo data).
-- **Times are UTC**, not the viewer's zone. No pagination (sized for the row caps). No audit trail of who changed what. Workspace links are bearer tokens (rotatable).
-- **Existing test records** from this project's acceptance runs remain until the owner runs `cleanupTestArtifacts`.
+- **Runs as the owner.** Scopes `spreadsheets`, `script.send_mail`, `script.scriptapp`.
+- **Mail is a spam-relay risk by nature.** Caps (20/day, 2 per recipient) and the kill switch bound it; set `EMAIL_DISABLED=true` if that is unacceptable.
+- **Quotas.** Anonymous traffic and mail consume the owner's quotas; each request reads whole sheets (sized for the row caps), so responses take a few seconds.
+- **Arming window.** Between adding `ADMIN_MODE=<function>` and running it, a visitor could call that same function first.
+- **Reassigning an owned task is not supported** (an assigned task can only be finished); a manager cannot close a task for an employee; priorities are low/medium/high.
+- **Times are UTC**; no pagination; the activity log is best effort; the Manager has no individual identity (comments are labelled "Manager").
+- **Existing test records** from this project's acceptance runs remain until the owner runs `cleanupTestArtifacts`; the pool is empty until a manager publishes tasks or the owner runs `resetDemoData`.
 
 ## AI tools and models used
 
 Based on the repository's own records (git history):
 
-- **Claude Code with Claude Opus 4.7** — `Co-Authored-By` trailer (and `Claude-Session` link) on commits `36a4cff` (initial application), `f46809d` (security and data-integrity remediation), `b2a2ed3` (README) and `0d737a7` (setup script).
-- **Claude Code with Claude Sonnet 5.5** — `Co-Authored-By` trailer on the later commits (setup-script fixes, public-demo hardening and deployment, and this change set).
-- No other AI tools are recorded; chat transcripts of the earlier sessions are not in the repository.
+- **Claude Code with Claude Opus 4.7** — `Co-Authored-By` trailer (and `Claude-Session` link) on `36a4cff`, `f46809d`, `b2a2ed3`, `0d737a7`.
+- **Claude Code with Claude Sonnet 5.5** — `Co-Authored-By` trailer on the later commits (setup fixes, public-demo hardening and deployment, invitations/localization/dashboard, and this change set).
+- No other AI tools are recorded; chat transcripts are not in the repository.
 
 ### Representative prompts
 
-Earlier prompts are those documented previously in this README; the later ones are
-taken from the work sessions that produced this change set. Anything not listed
-is **not available** in the repository.
+Earlier prompts are those documented previously; the later ones come from the
+work sessions that produced this change set. Anything not listed is **not available**.
 
-- "Design the Google Sheets data model for an employee time tracker where pause creates an auditable interval and resume opens a new one." — fixed the session-row shape so durations never need retroactive edits.
-- "Add a `LockService.getScriptLock()` wrapper around start/pause/resume/finish so two concurrent requests cannot create a duplicate active session." — made "one active session per employee" an invariant.
-- "Write a cellSafe(value) that prefixes a leading apostrophe…" — closed the spreadsheet formula-injection hole (reused for the CSV export).
-- "Prepare Working-Time-Tracker for public, unauthenticated demonstration … review every publicly callable server-side function … do not call `enableOpenAccess()`" — drove the public-surface audit (F-19…F-25), demo mode, reset and `surface.test.js`.
-- "Complete, deploy and verify … Do not silently remove the email restriction … do not claim email works unless delivery was authorized and tested" — drove the live deployment and the signed-out acceptance run.
-- "Upgrade for assessment: email invitations, complete Russian and English localization, professional UI redesign, dashboard, time analytics, CSV export, search and filtering, demo-data safety, security review, tests, deploy" — drove this change set (Analytics.gs, i18n.gs, Email.gs, the redesigned pages, the new test suites).
+- "Design the Google Sheets data model for an employee time tracker where pause creates an auditable interval and resume opens a new one."
+- "Add a `LockService.getScriptLock()` wrapper around start/pause/resume/finish so two concurrent requests cannot create a duplicate active session." — the same pattern now protects claiming and assignment.
+- "Write a cellSafe(value) that prefixes a leading apostrophe…" — reused for CSV.
+- "Prepare Working-Time-Tracker for public, unauthenticated demonstration … review every publicly callable server-side function."
+- "Upgrade for assessment: email invitations, Russian/English localization, redesign, dashboard, CSV, search, demo-data safety, tests, deploy."
+- "Work in the existing repository … treat the attached four-screen WorkTrack mockup as the visual reference … shared task pool, individual assignment, employee comments, bilingual UI, tests, deploy the verified version" — drove this change set (sidebar UI, `Projects.gs`, task moves, `common_js.html`, `tasks.test.js`, the new live acceptance run).
 
 ## Defects found and fixed
 
-Evidence = an actual test or an observed command result.
+Evidence = an actual test, screenshot or observed result.
 
-1. **`sumSessionMs` misclassified closed rows** and returned 0 — Node test `sums closed durations` (`Expected 0 === 6000`); fixed.
-2. **Unreachable duration fallback** (`Number('')` is `0`) — Node test `falls back to endpoints when durationMs missing`; fixed.
-3. **`setup-apps-script.sh` login check failed on clasp 3.4.1** (`clasp login --status` removed; observed `error: unknown option '--status'`) — fixed with `clasp show-authorized-user` (`b44f304`).
-4. **`setup-apps-script.sh` lost the manifest on first run** (`clasp create` overwrote it with the default) — found by cloning the remote project and diffing; fixed (`b44f304`).
-5. **Public-surface exposure F-19…F-25** — found by code audit and later confirmed absent live.
-6. **Validation errors shown as "server error"** — fixed; covered by Node and integration tests.
-7. **Horizontal overflow of the Employees table at tablet width (768 px)** — found by the live acceptance run (`overflow 179px`); fixed in version 4 by switching tables to stacked cards up to 880 px; re-verified live (no overflow at 1280/768/390 on all tabs).
-8. **Test-data pollution of the shared demo** — caused by this project's own live acceptance runs; mitigated by labelling every record with an exactly-matchable fictional address and providing the narrowly-scoped, owner-armed `cleanupTestArtifacts`.
+1. `sumSessionMs` misclassified closed rows; unreachable duration fallback (Node tests, earlier work).
+2. `setup-apps-script.sh`: clasp 3.x login check and manifest overwritten by `clasp create` (earlier work).
+3. Public-surface exposure F-19…F-25 and the validation-error message (earlier work).
+4. Employees table overflowing at tablet width (live run, earlier version) — fixed by stacked tables.
+5. **Hidden buttons were visible** (found in a screenshot of the new employee overview: Start, Pause, Resume and Finish all showed at once): the global `button { display: inline-block }` rule overrode the `hidden` attribute. Fixed with `[hidden] { display: none !important }`; the live run now asserts the real states.
+6. **Slow list refresh** (found by timing the live run): after creating an employee the list took ~12 s and the form stayed disabled, because every request re-verified eight sheets and the page reloaded three unrelated lists in sequence. Fixed: spreadsheet handle reused per request, sheet check cached for 120 s (never bypassing the access check), the form re-enabled immediately and only the affected list reloaded.
+7. **Task table headers broke mid-word at desktop width** (screenshot) — fixed with nowrap headers/buttons.
+8. Test-data pollution of the shared demo by this project's own acceptance runs — mitigated by exactly-matchable fictional names and the owner-armed `cleanupTestArtifacts`, now also covering acceptance projects and their tasks, comments and activity.
 
 ## Files
 
@@ -399,19 +460,20 @@ Evidence = an actual test or an observed command result.
 appsscript.json         Manifest (scopes: spreadsheets, script.send_mail, script.scriptapp; web app: anyone, run as owner)
 scripts/setup-apps-script.sh   clasp create/push (Git Bash on Windows)
 src/
-  Code.gs        doGet, api_*, safeApi_ (coded errors), access gate
-  Config.gs      DEFAULT_CONFIG, DEMO_CONFIG (limits, email caps), spreadsheet lookup
-  Analytics.gs   dashboard metrics and CSV export
+  Code.gs        doGet, 30 api_*, safeApi_ (coded errors), access gate
+  Config.gs      DEFAULT_CONFIG, DEMO_CONFIG (limits, email caps), spreadsheet lookup (memoised)
+  Tasks.gs       task rows, transitions (claim/assign/publish/…), decorated views
+  Projects.gs    projects, comments, activity log
+  Sessions.gs    timers per task; Employees.gs, Reports.gs, Repository.gs, Setup.gs (migration, cached check), Utils.gs
+  Analytics.gs   dashboard and CSV export
   Email.gs       invitations: capability probe, caps, log, test-double hook
   Demo.gs        adminOnly_, demo checks, sample data, resetDemoData, cleanupTestArtifacts
-  Employees.gs, Tasks.gs, Sessions.gs, Reports.gs, Repository.gs, Setup.gs, Utils.gs
   pure.gs        pure logic (also loaded by Node tests)
   i18n.gs        dictionaries (ru/en), language rule, error codes, email/CSV texts
   Tests.gs       Apps Script integration tests (runTests, owner-armed)
-  manager.html, manager_js.html, employee.html, employee_js.html, i18n_js.html, styles.html
+  manager.html, manager_js.html, employee.html, employee_js.html, common_js.html, i18n_js.html, styles.html
 tests/
-  pure.test.js, analytics.test.js, i18n.test.js, surface.test.js, gas-sim.test.js, run.js
-  gas-sim.js, load-pure.js, load-i18n.js     helpers
-  live/accept.js, live/shots.js, live/cdp.js  signed-out browser acceptance + screenshots (dependency-free)
+  pure, analytics, tasks, i18n, surface, gas-sim (+ gas-sim.js, load-pure.js, load-i18n.js), run.js
+  live/accept.js, live/shots.js, live/cdp.js   signed-out browser acceptance + screenshots (dependency-free)
 package.json     `npm test`
 ```

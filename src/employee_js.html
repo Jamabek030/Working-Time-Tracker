@@ -3,134 +3,276 @@
   'use strict';
 
   var T = WTT.t;
+  var U = WTTU;
+  var h = U.h, clear = U.clear, setStatus = U.setStatus, td = U.td;
+  var S = { data: null, fetchedAt: 0, available: null, comments: [], cmTask: '' };
+  var nav, tickHandle = null;
+
   function $(sel) { return document.querySelector(sel); }
-  function h(tag, props, kids) {
-    var e = document.createElement(tag);
-    props = props || {};
-    Object.keys(props).forEach(function (k) {
-      if (props[k] === undefined || props[k] === null || props[k] === false) return;
-      if (k === 'text') e.textContent = props[k]; else if (k === 'class') e.className = props[k]; else e.setAttribute(k, props[k]);
-    });
-    (kids || []).forEach(function (c) { if (c) e.appendChild(c); });
-    return e;
-  }
+  // Every call carries only the workspace token and task ids; the server decides
+  // who the employee is and whether a task is theirs.
   function call(fn) {
-    var args = Array.prototype.slice.call(arguments, 1);
-    return new Promise(function (resolve, reject) {
-      var runner = google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(function (err) { reject(new Error(WTT.errorText(err))); });
-      runner[fn].apply(runner, args);
+    var args = [fn, WORKSPACE_TOKEN].concat(Array.prototype.slice.call(arguments, 1));
+    return U.call.apply(null, args);
+  }
+  function flash(kind, text) { setStatus($('#status'), kind, text); if (text) window.scrollTo(0, 0); }
+
+  // ---------------------------------------------------------------- derived values
+  function liveMs(t) { return t.trackedMs + (t.displayStatus === 'in_progress' ? Date.now() - S.fetchedAt : 0); }
+  function myTasks() { return (S.data && S.data.tasks) || []; }
+  function running() { return myTasks().filter(function (t) { return t.displayStatus === 'in_progress'; })[0] || null; }
+  function isOpen(t) { return t.status === 'active'; }
+
+  function startTicking() { stopTicking(); tickHandle = setInterval(renderTimes, 1000); renderTimes(); }
+  function stopTicking() { if (tickHandle) { clearInterval(tickHandle); tickHandle = null; } }
+  function renderTimes() {
+    var tasks = myTasks();
+    var byId = {};
+    tasks.forEach(function (t) { byId[t.id] = t; });
+    Array.prototype.forEach.call(document.querySelectorAll('.live-time'), function (el) {
+      var t = byId[el.getAttribute('data-task')];
+      if (t) el.textContent = WTT.fmtMs(liveMs(t));
+    });
+    var cur = S.data && S.data.activeTask;
+    $('#timer-display').textContent = cur ? WTT.fmtMs(liveMs(cur)) : '00:00:00';
+    if (S.data) {
+      var extra = running() ? Date.now() - S.fetchedAt : 0;
+      $('#today-time').textContent = WTT.fmtMs(S.data.todayMs + extra);
+    }
+  }
+
+  // ---------------------------------------------------------------- actions
+  var busy = false;
+  function act(fn, args, okKey) {
+    if (busy) return Promise.resolve();
+    busy = true; setStatus($('#status'), '', T('common.saving'));
+    setBusy(true);
+    return call.apply(null, [fn].concat(args)).then(function () {
+      return refresh().then(function () { flash(okKey ? 'ok' : '', okKey ? T(okKey) : ''); });
+    }).catch(function (err) {
+      flash('error', err.message);
+      return Promise.all([refresh(), loadAvailable()]);
+    }).then(function () { busy = false; setBusy(false); });
+  }
+  function setBusy(on) {
+    Array.prototype.forEach.call(document.querySelectorAll('.main-col button.act'), function (b) { b.disabled = on || b.getAttribute('data-locked') === '1'; });
+  }
+
+  function actionButtons(t, compact) {
+    var nodes = [];
+    var other = running() && running().id !== t.id;
+    function btn(cls, labelKey, handler, locked) {
+      return h('button', { type: 'button', class: 'act ' + cls + (compact ? ' small' : ''), text: T(labelKey), 'data-locked': locked ? '1' : null, disabled: locked ? true : null,
+        title: locked ? T('ws.pauseFirst') : null, on: { click: handler } });
+    }
+    if (t.displayStatus === 'assigned') nodes.push(btn('primary', 'ws.start', function () { act('api_startSession', [t.id]); }, other));
+    if (t.displayStatus === 'paused') nodes.push(btn('primary', 'ws.resume', function () { act('api_resumeSession', [t.id]); }, other));
+    if (t.displayStatus === 'in_progress') nodes.push(btn('warn', 'ws.pause', function () { act('api_pauseSession', []); }));
+    if (isOpen(t)) nodes.push(btn('danger', 'ws.finish', function () { if (confirm(T('ws.finishConfirm'))) act('api_finishTask', [t.id], 'ws.finished'); }));
+    return nodes;
+  }
+
+  // ---------------------------------------------------------------- task cards
+  function taskCard(t, opts) {
+    opts = opts || {};
+    var meta = h('div', { class: 'badges' }, [U.taskStatusBadge(t.displayStatus), U.priorityBadge(t.priority), t.projectName ? h('span', { class: 'chip', text: t.projectName }) : null]);
+    var info = h('div', { class: 'task-info' }, [
+      h('div', { class: 'task-title-row' }, [h('strong', { class: 'task-ref', text: t.title })]),
+      meta,
+      t.description && !opts.compact ? h('p', { class: 'desc', text: t.description }) : null,
+      h('div', { class: 'muted small task-meta' }, [
+        h('span', { text: T('task.deadline') + ': ' }), U.dueNode(t),
+        h('span', { text: ' · ' + T('details.total') + ': ' }), h('span', { class: 'live-time', 'data-task': t.id, text: WTT.fmtMs(liveMs(t)) })
+      ])
+    ]);
+    var actions = h('div', { class: 'actions' }, actionButtons(t, true).concat(opts.comment ? [h('button', { type: 'button', class: 'secondary small', text: T('nav.comments'), on: { click: function () { S.cmTask = t.id; nav.show('comments'); } } })] : []));
+    return h('article', { class: 'task-card' + (t.overdue ? ' overdue' : '') + (t.displayStatus === 'in_progress' ? ' running' : '') }, [info, actions]);
+  }
+
+  function renderOverview() {
+    var d = S.data; if (!d) return;
+    var name = [d.employee.firstName, d.employee.middleName].filter(Boolean)[0] || d.employee.lastName;
+    $('#greeting').textContent = T('ws.greeting', { name: name });
+    $('#today-date').textContent = new Date().toLocaleDateString(WTT.locale(), { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + ' (UTC)';
+    var cur = d.activeTask;
+    $('#cur-empty').hidden = !!cur; $('#cur-box').hidden = !cur;
+    var title = $('#task-title');
+    title.removeAttribute('data-i18n');
+    var meta = $('#cur-meta'); clear(meta);
+    ['#btn-start', '#btn-pause', '#btn-resume', '#btn-finish'].forEach(function (s) { $(s).hidden = true; $(s).disabled = false; $(s).removeAttribute('title'); });
+    if (cur) {
+      title.textContent = cur.title;
+      [U.taskStatusBadge(cur.displayStatus), U.priorityBadge(cur.priority), cur.projectName ? h('span', { class: 'chip', text: cur.projectName }) : null, h('span', { class: 'muted small' }, [T('task.deadline') + ': ', U.dueNode(cur)])].forEach(function (n) { if (n) meta.appendChild(n); });
+      var other = running() && running().id !== cur.id;
+      if (cur.displayStatus === 'assigned') { $('#btn-start').hidden = false; if (other) { $('#btn-start').disabled = true; $('#btn-start').title = T('ws.pauseFirst'); } }
+      if (cur.displayStatus === 'paused') { $('#btn-resume').hidden = false; if (other) { $('#btn-resume').disabled = true; $('#btn-resume').title = T('ws.pauseFirst'); } }
+      if (cur.displayStatus === 'in_progress') $('#btn-pause').hidden = false;
+      $('#btn-finish').hidden = false;
+    }
+    $('#today-done').textContent = String(d.completedToday);
+    $('#open-count').textContent = String(myTasks().filter(isOpen).length);
+    var box = $('#ov-tasks'); clear(box);
+    var open = myTasks().filter(isOpen).slice(0, 4);
+    if (!open.length) box.appendChild(U.empty(T('ws.noTasks')));
+    open.forEach(function (t) { box.appendChild(taskCard(t, { compact: true })); });
+    var feed = $('#ov-comments'); clear(feed);
+    if (!S.comments.length) feed.appendChild(h('li', { class: 'empty', text: T('comment.none') }));
+    S.comments.slice(-4).reverse().forEach(function (c) { feed.appendChild(commentItem(c, true)); });
+    renderTimes();
+  }
+
+  function commentItem(c, withTask) {
+    var mine = c.authorType === 'employee';
+    var who = mine ? (c.authorName || T('role.employee')) : T('role.manager');
+    return h('li', { class: 'comment ' + c.authorType }, [
+      h('div', { class: 'comment-head' }, [
+        h('span', { class: 'avatar small', 'aria-hidden': 'true', text: mine ? U.initials(who) : 'M' }), h('strong', { text: who }),
+        withTask && c.taskTitle ? h('span', { class: 'muted' }, [' · ', h('em', { class: 'task-ref', text: c.taskTitle })]) : null,
+        h('span', { class: 'muted small', text: ' · ' + WTT.fmtDateTime(c.createdAt) })
+      ]),
+      h('div', { class: 'comment-text', text: c.text })
+    ]);
+  }
+
+  function renderMyTasks() {
+    var f = $('#mt-filter').value;
+    var list = myTasks().filter(function (t) { return f === 'all' ? true : (f === 'completed' ? t.status === 'completed' : isOpen(t)); });
+    list.sort(function (a, b) {
+      var order = { in_progress: 0, paused: 1, assigned: 2, completed: 3, replaced: 4 };
+      return (order[a.displayStatus] - order[b.displayStatus]) || ((a.dueDate || '9999') < (b.dueDate || '9999') ? -1 : 1);
+    });
+    $('#mt-empty').hidden = list.length > 0;
+    var box = $('#mt-list'); clear(box);
+    list.forEach(function (t) { box.appendChild(taskCard(t, { comment: true })); });
+  }
+
+  // ---------------------------------------------------------------- shared pool
+  function loadAvailable() {
+    return call('api_listAvailableTasks').then(function (list) { S.available = list; $('#av-loading').hidden = true; renderAvailable(); })
+      .catch(function (err) { setStatus($('#av-loading'), 'error', err.message); $('#av-loading').hidden = false; });
+  }
+  function populateProjects() {
+    var sel = $('#av-project'), keep = sel.value;
+    clear(sel);
+    sel.appendChild(h('option', { value: '', text: T('state.all') }));
+    var seen = {};
+    (S.available || []).forEach(function (t) { if (t.projectName && !seen[t.projectName]) { seen[t.projectName] = 1; sel.appendChild(h('option', { value: t.projectName, text: t.projectName })); } });
+    sel.value = keep; if (sel.value !== keep) sel.value = '';
+  }
+  function renderAvailable() {
+    if (!S.available) return;
+    populateProjects();
+    var q = $('#av-search').value.trim().toLowerCase().split(/\s+/).filter(Boolean), proj = $('#av-project').value, pr = $('#av-priority').value;
+    var list = S.available.filter(function (t) {
+      if (proj && t.projectName !== proj) return false;
+      if (pr && t.priority !== pr) return false;
+      var hay = [t.title, t.description, t.projectName].join(' ').toLowerCase();
+      return q.every(function (p) { return hay.indexOf(p) >= 0; });
+    });
+    $('#av-empty').hidden = S.available.length > 0;
+    $('#av-noresults').hidden = !(S.available.length > 0 && list.length === 0);
+    var box = $('#av-list'); clear(box);
+    list.forEach(function (t) {
+      var claim = h('button', { type: 'button', class: 'act primary', text: T('ws.claim'), 'aria-label': T('ws.claimTask', { title: t.title }), on: { click: function () {
+        act('api_claimTask', [t.id], 'ws.claimed').then(function () { return loadAvailable(); });
+      } } });
+      box.appendChild(h('article', { class: 'task-card' + (t.overdue ? ' overdue' : '') }, [
+        h('div', { class: 'task-info' }, [
+          h('div', { class: 'task-title-row' }, [h('strong', { class: 'task-ref', text: t.title })]),
+          h('div', { class: 'badges' }, [U.priorityBadge(t.priority), t.projectName ? h('span', { class: 'chip', text: t.projectName }) : null]),
+          t.description ? h('p', { class: 'desc', text: t.description }) : null,
+          h('div', { class: 'muted small task-meta' }, [h('span', { text: T('task.deadline') + ': ' }), U.dueNode(t)])
+        ]),
+        h('div', { class: 'actions' }, [claim])
+      ]));
     });
   }
+  ['#av-search'].forEach(function (s) { $(s).addEventListener('input', renderAvailable); });
+  ['#av-project', '#av-priority'].forEach(function (s) { $(s).addEventListener('change', renderAvailable); });
 
-  var btnStart = $('#btn-start');
-  var btnPause = $('#btn-pause');
-  var btnResume = $('#btn-resume');
-  var btnFinish = $('#btn-finish');
-  var timerDisplay = $('#timer-display');
-  var statusEl = $('#status');
-  var taskTitle = $('#task-title');
-
-  var state = null;
-  var fetchedAt = 0;
-  var tickHandle = null;
-
-  function setStatus(msg, kind) {
-    statusEl.className = 'status' + (kind ? ' ' + kind : '');
-    statusEl.textContent = msg || '';
-  }
-  function stopTicking() { if (tickHandle) { clearInterval(tickHandle); tickHandle = null; } }
-  function startTicking() { stopTicking(); tickHandle = setInterval(renderTimer, 1000); renderTimer(); }
-
-  function renderTimer() {
-    if (!state || !state.activeTask) { timerDisplay.textContent = '00:00:00'; return; }
-    var base = Number(state.totalMsForActiveTask) || 0;
-    var extra = state.activeSession ? (Date.now() - fetchedAt) : 0;
-    timerDisplay.textContent = WTT.fmtMs(base + extra);
-  }
-
-  function renderButtons() {
-    btnStart.hidden = btnPause.hidden = btnResume.hidden = btnFinish.hidden = true;
-    if (!state || !state.activeTask) return;
-    if (state.activeSession) { btnPause.hidden = false; btnFinish.hidden = false; return; }
-    var hasPrior = (state.sessions || []).some(function (s) { return s.taskId === state.activeTask.id; });
-    if (hasPrior) btnResume.hidden = false; else btnStart.hidden = false;
-    btnFinish.hidden = false;
-  }
-
-  function renderTaskTitle() {
-    taskTitle.removeAttribute('data-i18n');
-    taskTitle.textContent = (!state || !state.activeTask) ? T('ws.noTask') : state.activeTask.title;
-  }
-
+  // ---------------------------------------------------------------- history
   function renderHistory() {
+    var d = S.data; if (!d) return;
     var table = $('#history-table'), empty = $('#history-empty');
-    $('#history-loading').hidden = true;
-    var sessions = (state && state.sessions) || [];
+    var sessions = d.sessions;
     if (!sessions.length) { table.hidden = true; empty.hidden = false; return; }
     empty.hidden = true;
-    var taskById = {};
-    (state.tasks || []).forEach(function (t) { taskById[t.id] = t; });
-    var tbody = table.querySelector('tbody');
-    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    var titles = {};
+    d.tasks.forEach(function (t) { titles[t.id] = t.title; });
+    var tb = table.querySelector('tbody'); clear(tb);
     sessions.slice().sort(function (a, b) { return a.startTime < b.startTime ? 1 : -1; }).forEach(function (s) {
-      var dur = Number(s.durationMs) || 0;
-      if (s.status === 'active') dur = Date.now() - new Date(s.startTime).getTime();
-      var task = taskById[s.taskId];
-      tbody.appendChild(h('tr', {}, [
-        h('td', { 'data-label': T('col.task'), text: task ? task.title : T('common.unknown') }),
-        h('td', { 'data-label': T('col.start'), text: WTT.fmtDateTime(s.startTime) }),
-        h('td', { 'data-label': T('col.end'), text: WTT.fmtDateTime(s.endTime) }),
-        h('td', { 'data-label': T('col.duration'), text: WTT.fmtMs(dur) }),
-        h('td', { 'data-label': T('col.status') }, [h('span', { class: 'pill ' + s.status, text: T('status.' + s.status) })])
-      ]));
+      var dur = s.status === 'active' ? Date.now() - new Date(s.startTime).getTime() : (Number(s.durationMs) || 0);
+      tb.appendChild(h('tr', {}, [td(T('col.task'), titles[s.taskId] || T('common.unknown')), td(T('col.start'), WTT.fmtDateTime(s.startTime)), td(T('col.end'), WTT.fmtDateTime(s.endTime)), td(T('col.duration'), WTT.fmtMs(dur)), td(T('col.status'), U.sessionBadge(s.status))]));
     });
     table.hidden = false;
   }
 
-  function renderAll() {
-    renderTaskTitle(); renderButtons(); renderHistory();
-    if (state && state.activeSession) startTicking(); else { stopTicking(); renderTimer(); }
+  // ---------------------------------------------------------------- comments
+  function loadComments() {
+    return call('api_listMyComments').then(function (list) { S.comments = list; renderComments(); renderOverview(); }).catch(function (err) { setStatus($('#cm-status'), 'error', err.message); });
   }
+  function renderComments() {
+    var sel = $('#cm-task'), tasks = myTasks();
+    var keep = S.cmTask || sel.value;
+    clear(sel);
+    tasks.forEach(function (t) { sel.appendChild(h('option', { value: t.id, text: t.title })); });
+    $('#cm-empty-tasks').hidden = tasks.length > 0; $('#cm-form').hidden = tasks.length === 0; sel.hidden = tasks.length === 0;
+    if (tasks.length) { sel.value = keep; if (sel.value !== keep) sel.value = tasks[0].id; S.cmTask = sel.value; }
+    var thread = $('#cm-thread'); clear(thread);
+    var list = S.comments.filter(function (c) { return c.taskId === S.cmTask; });
+    if (tasks.length && !list.length) thread.appendChild(h('li', { class: 'empty', text: T('comment.none') }));
+    list.forEach(function (c) { thread.appendChild(commentItem(c, false)); });
+  }
+  $('#cm-task').addEventListener('change', function () { S.cmTask = $('#cm-task').value; renderComments(); });
+  $('#cm-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var st = $('#cm-status'), btn = $('#cm-send');
+    btn.disabled = true; setStatus(st, '', T('common.saving'));
+    call('api_addComment', S.cmTask, $('#cm-text').value).then(function () {
+      $('#cm-text').value = ''; setStatus(st, 'ok', T('comment.sent')); return loadComments();
+    }).catch(function (err) { setStatus(st, 'error', err.message); }).then(function () { btn.disabled = false; });
+  });
 
+  // ---------------------------------------------------------------- state
+  function renderAll() {
+    renderOverview(); renderMyTasks(); renderHistory(); renderComments(); renderAvailable();
+    if (running()) startTicking(); else { stopTicking(); renderTimes(); }
+    setBusy(busy);
+  }
   function refresh() {
-    return call('api_getEmployeeState', WORKSPACE_TOKEN).then(function (s) {
-      state = s;
-      fetchedAt = Date.now();
-      renderAll();
-      setStatus('');
-    }).catch(function (err) {
-      $('#history-loading').hidden = true;
-      taskTitle.removeAttribute('data-i18n');
-      taskTitle.textContent = T('ws.unavailable');
-      setStatus(err.message, 'error');
+    return call('api_getEmployeeState').then(function (s) { S.data = s; S.fetchedAt = Date.now(); renderAll(); }).catch(function (err) {
+      $('#task-title').removeAttribute('data-i18n'); $('#task-title').textContent = T('ws.unavailable');
+      flash('error', err.message);
     });
   }
 
-  function action(fn, labelKey) {
-    setStatus(T(labelKey));
-    [btnStart, btnPause, btnResume, btnFinish].forEach(function (b) { b.disabled = true; });
-    return call(fn, WORKSPACE_TOKEN).then(function () { return refresh(); }).catch(function (err) {
-      setStatus(err.message, 'error');
-    }).then(function () { [btnStart, btnPause, btnResume, btnFinish].forEach(function (b) { b.disabled = false; }); });
-  }
-
-  btnStart.addEventListener('click', function () { action('api_startSession', 'ws.starting'); });
-  btnResume.addEventListener('click', function () { action('api_resumeSession', 'ws.resuming'); });
-  btnPause.addEventListener('click', function () { action('api_pauseSession', 'ws.pausing'); });
-  btnFinish.addEventListener('click', function () {
-    if (!confirm(T('ws.finishConfirm'))) return;
-    action('api_finishTask', 'ws.finishing');
+  $('#btn-start').addEventListener('click', function () { var c = S.data && S.data.activeTask; if (c) act('api_startSession', [c.id]); });
+  $('#btn-resume').addEventListener('click', function () { var c = S.data && S.data.activeTask; if (c) act('api_resumeSession', [c.id]); });
+  $('#btn-pause').addEventListener('click', function () { act('api_pauseSession', []); });
+  $('#btn-finish').addEventListener('click', function () {
+    var c = S.data && S.data.activeTask;
+    if (c && confirm(T('ws.finishConfirm'))) act('api_finishTask', [c.id], 'ws.finished');
   });
+  $('#mt-filter').addEventListener('change', renderMyTasks);
+  $('#btn-goto-available').addEventListener('click', function () { nav.show('available'); });
+  $('#btn-all-tasks').addEventListener('click', function () { nav.show('mytasks'); });
+  $('#btn-all-comments').addEventListener('click', function () { nav.show('comments'); });
 
-  WTT.onChange(function () { if (state) renderAll(); });
+  WTT.onChange(function () { if (S.data) renderAll(); });
+
+  function onShow(name) {
+    if (name === 'available') loadAvailable();
+    if (name === 'comments') loadComments();
+    if (name === 'overview' || name === 'mytasks') refresh();
+  }
 
   function boot(urlLang) {
     WTT.init(urlLang);
-    refresh();
+    nav = U.setupNav(onShow);
+    nav.show('overview');
+    loadAvailable(); loadComments();
     // Resync every minute so changes a manager makes show up without a reload.
-    setInterval(refresh, 60000);
+    setInterval(function () { if (!busy) { refresh(); loadComments(); } }, 60000);
   }
   try {
     google.script.url.getLocation(function (loc) { boot(loc && loc.parameter && loc.parameter.lang && String(loc.parameter.lang)); });
